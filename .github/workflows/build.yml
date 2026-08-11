@@ -1,4 +1,4 @@
-name: Cross-Platform Proxy Builder
+name: Proxy Builder
 
 on:
   workflow_dispatch:
