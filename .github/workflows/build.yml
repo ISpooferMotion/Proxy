@@ -1,4 +1,4 @@
-name: Proxy Builder
+name: Hub
 
 on:
   workflow_dispatch: {}
