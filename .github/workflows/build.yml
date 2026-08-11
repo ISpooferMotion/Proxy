@@ -4,23 +4,95 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Tag to build (e.g., v1.0.0)'
+        description: "Hub source ref to build (branch, tag, or commit)"
         required: true
+        default: "master"
+      release_tag:
+        description: "Optional release tag (defaults to v<tauri.conf.json version>)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hub-release-${{ inputs.tag_name }}
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Checkout ISpooferMotion-Hub metadata
+        uses: actions/checkout@v4
+        with:
+          repository: ISpooferMotion/ISpooferMotion-Hub
+          token: ${{ secrets.PAT }}
+          ref: ${{ inputs.tag_name }}
+          path: ISpooferMotion-Hub
+
+      - name: Resolve version and prepare a clean draft
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+          SOURCE_REF: ${{ inputs.tag_name }}
+          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
+          RELEASE_REPOSITORY: ISpooferMotion/ISpooferMotion-Hub
+        run: |
+          set -euo pipefail
+
+          version="$(jq -er '.version' ISpooferMotion-Hub/tauri.conf.json)"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid Hub version in tauri.conf.json: $version" >&2
+            exit 1
+          fi
+
+          release_tag="${RELEASE_TAG_INPUT:-v${version}}"
+          if [[ ! "$release_tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must be a version such as v26.7.7: $release_tag" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+          if release_json="$(gh release view "$release_tag" --repo "$RELEASE_REPOSITORY" --json isDraft 2>/dev/null)"; then
+            if [[ "$(jq -r '.isDraft' <<<"$release_json")" != "true" ]]; then
+              echo "Release $release_tag is already published; use a new version tag." >&2
+              exit 1
+            fi
+
+            gh release view "$release_tag" --repo "$RELEASE_REPOSITORY" --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do
+                [[ -z "$asset" ]] || gh release delete-asset "$release_tag" "$asset" --repo "$RELEASE_REPOSITORY" --yes
+              done
+          else
+            gh release create "$release_tag" \
+              --repo "$RELEASE_REPOSITORY" \
+              --target "$SOURCE_REF" \
+              --title "ISpooferMotion Hub $release_tag" \
+              --generate-notes \
+              --draft
+          fi
+
   build:
+    needs: prepare
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
-            args: '--target aarch64-apple-darwin --bundles dmg'
-          - platform: 'macos-latest'
-            args: '--target x86_64-apple-darwin --bundles dmg'
-          - platform: 'ubuntu-22.04'
-            args: '--bundles appimage'
-          - platform: 'windows-latest'
-            args: '--bundles nsis'
+          - platform: macos-latest
+            args: "--target aarch64-apple-darwin --bundles dmg"
+          - platform: macos-latest
+            args: "--target x86_64-apple-darwin --bundles dmg"
+          - platform: ubuntu-22.04
+            args: "--bundles appimage"
+          - platform: windows-latest
+            args: "--bundles nsis"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -29,7 +101,7 @@ jobs:
         with:
           repository: ISpooferMotion/ISpooferMotion-Hub
           token: ${{ secrets.PAT }}
-          ref: ${{ github.event.inputs.tag_name }}
+          ref: ${{ inputs.tag_name }}
           path: ISpooferMotion-Hub
 
       - name: Checkout ISpooferMotion-V3
@@ -38,11 +110,6 @@ jobs:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           token: ${{ secrets.PAT }}
           path: ISpooferMotion-V3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -63,8 +130,9 @@ jobs:
       - name: Obfuscate Hub Source
         shell: bash
         run: |
+          set -euo pipefail
           mv ISpooferMotion-Hub ISpooferMotion-Hub-Orig
-          cargo run --manifest-path ISpooferMotion-V3/apps/obfuscator/Cargo.toml --release -- --source ./ISpooferMotion-Hub-Orig --target ./ISpooferMotion-Hub
+          cargo run --manifest-path ISpooferMotion-V3/apps/obfuscator/Cargo.toml --release -- --source ./ISpooferMotion-Hub-Orig --target ./ISpooferMotion-Hub --verify
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile --ignore-scripts
@@ -74,22 +142,68 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
         working-directory: ISpooferMotion-Hub
 
-      - name: Build Tauri App
-        shell: bash
+      - name: Build and upload signed Tauri bundles
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-        run: |
-          bun run build -- ${{ matrix.args }}
-        working-directory: ISpooferMotion-Hub
+        with:
+          projectPath: ISpooferMotion-Hub
+          tauriScript: bun tauri
+          owner: ISpooferMotion
+          repo: ISpooferMotion-Hub
+          tagName: ${{ needs.prepare.outputs.release_tag }}
+          releaseName: ISpooferMotion Hub ${{ needs.prepare.outputs.release_tag }}
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+          uploadPlainBinary: false
+          assetNamePattern: ISpooferMotion-Hub-[version]-[platform]-[arch][setup][ext]
+          args: ${{ matrix.args }}
 
-      - name: Upload to Private Repo Release
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release assets and updater manifest
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PAT }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_REPOSITORY: ISpooferMotion/ISpooferMotion-Hub
         run: |
-          # Create a draft release on your private repo if it doesn't already exist
-          gh release create "${{ github.event.inputs.tag_name }}" --repo ISpooferMotion/ISpooferMotion-Hub --title "ISpooferMotion Hub ${{ github.event.inputs.tag_name }}" --draft || true
+          set -euo pipefail
 
-          # Upload all generated bundles and updater signatures back to your private repo!
-          find ISpooferMotion-Hub/target -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.msi" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.sig" \) -exec gh release upload "${{ github.event.inputs.tag_name }}" {} --repo ISpooferMotion/ISpooferMotion-Hub --clobber \;
+          mkdir release-check
+          gh release download "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --pattern latest.json --dir release-check
+          gh release view "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --json assets --jq '.assets[].name' > release-check/assets.txt
+
+          if grep -Eiq 'build[_-]script[_-]build' release-check/assets.txt; then
+            echo "Cargo build-script executables must never be release assets." >&2
+            exit 1
+          fi
+
+          for platform in windows-x86_64 darwin-x86_64 darwin-aarch64 linux-x86_64; do
+            jq -e --arg platform "$platform" '
+              .platforms[$platform]
+              | (.signature | type == "string" and length > 0)
+                and (.url | type == "string" and startswith("https://github.com/ISpooferMotion/ISpooferMotion-Hub/releases/download/"))
+            ' release-check/latest.json > /dev/null
+          done
+
+          grep -Eiq 'windows.*(x86_64|x64|amd64).*\.exe$' release-check/assets.txt
+          grep -Eiq '(darwin|macos).*(x86_64|x64|amd64).*\.dmg$' release-check/assets.txt
+          grep -Eiq '(darwin|macos).*(aarch64|arm64).*\.dmg$' release-check/assets.txt
+          grep -Eiq 'linux.*(x86_64|x64|amd64).*\.AppImage$' release-check/assets.txt
+
+      - name: Publish completed Hub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_REPOSITORY: ISpooferMotion/ISpooferMotion-Hub
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPOSITORY" --draft=false --latest
