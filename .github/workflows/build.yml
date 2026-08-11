@@ -86,9 +86,9 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
-            args: "--target aarch64-apple-darwin --bundles dmg"
+            args: "--target aarch64-apple-darwin --bundles app,dmg"
           - platform: macos-latest
-            args: "--target x86_64-apple-darwin --bundles dmg"
+            args: "--target x86_64-apple-darwin --bundles app,dmg"
           - platform: ubuntu-22.04
             args: "--bundles appimage"
           - platform: windows-latest
@@ -186,17 +186,29 @@ jobs:
           fi
 
           for platform in windows-x86_64 darwin-x86_64 darwin-aarch64 linux-x86_64; do
-            jq -e --arg platform "$platform" '
+            if ! jq -e --arg platform "$platform" '
               .platforms[$platform]
               | (.signature | type == "string" and length > 0)
                 and (.url | type == "string" and startswith("https://github.com/ISpooferMotion/ISpooferMotion-Hub/releases/download/"))
-            ' release-check/latest.json > /dev/null
+            ' release-check/latest.json > /dev/null; then
+              echo "latest.json is missing a signed updater entry for $platform." >&2
+              exit 1
+            fi
           done
 
-          grep -Eiq 'windows.*(x86_64|x64|amd64).*\.exe$' release-check/assets.txt
-          grep -Eiq '(darwin|macos).*(x86_64|x64|amd64).*\.dmg$' release-check/assets.txt
-          grep -Eiq '(darwin|macos).*(aarch64|arm64).*\.dmg$' release-check/assets.txt
-          grep -Eiq 'linux.*(x86_64|x64|amd64).*\.AppImage$' release-check/assets.txt
+          require_asset() {
+            local pattern="$1"
+            local description="$2"
+            if ! grep -Eiq "$pattern" release-check/assets.txt; then
+              echo "Release is missing the $description asset." >&2
+              exit 1
+            fi
+          }
+
+          require_asset 'windows.*(x86_64|x64|amd64).*\.exe$' 'Windows x64 installer'
+          require_asset '(darwin|macos).*(x86_64|x64|amd64).*\.dmg$' 'macOS Intel DMG'
+          require_asset '(darwin|macos).*(aarch64|arm64).*\.dmg$' 'macOS Apple Silicon DMG'
+          require_asset 'linux.*(x86_64|x64|amd64).*\.AppImage$' 'Linux x64 AppImage'
 
       - name: Publish completed Hub release
         shell: bash
