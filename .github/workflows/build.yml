@@ -1,22 +1,13 @@
 name: Proxy Builder
 
 on:
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: "Hub source ref to build (branch, tag, or commit)"
-        required: true
-        default: "master"
-      release_tag:
-        description: "Optional release tag (defaults to v<tauri.conf.json version>)"
-        required: false
-        default: ""
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: hub-release-${{ inputs.tag_name }}
+  group: hub-release
   cancel-in-progress: false
 
 jobs:
@@ -24,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
       version: ${{ steps.release.outputs.version }}
     steps:
       - name: Checkout ISpooferMotion-Hub metadata
@@ -31,16 +23,13 @@ jobs:
         with:
           repository: ISpooferMotion/ISpooferMotion-Hub
           token: ${{ secrets.PAT }}
-          ref: ${{ inputs.tag_name }}
           path: ISpooferMotion-Hub
 
-      - name: Resolve version and prepare a clean draft
+      - name: Resolve Hub version and prepare a clean draft
         id: release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PAT }}
-          SOURCE_REF: ${{ inputs.tag_name }}
-          RELEASE_TAG_INPUT: ${{ inputs.release_tag }}
           RELEASE_REPOSITORY: ISpooferMotion/ISpooferMotion-Hub
         run: |
           set -euo pipefail
@@ -51,18 +40,19 @@ jobs:
             exit 1
           fi
 
-          release_tag="${RELEASE_TAG_INPUT:-v${version}}"
-          if [[ ! "$release_tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release tag must be a version such as v26.7.7: $release_tag" >&2
-            exit 1
-          fi
+          # GitHub Releases require an internal tag. Derive it exclusively from
+          # the Hub's own version so dispatching a Hub build never needs a tag
+          # input and is never coupled to the V3 repository version.
+          release_tag="v${version}"
+          source_sha="$(git -C ISpooferMotion-Hub rev-parse HEAD)"
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
 
           if release_json="$(gh release view "$release_tag" --repo "$RELEASE_REPOSITORY" --json isDraft 2>/dev/null)"; then
             if [[ "$(jq -r '.isDraft' <<<"$release_json")" != "true" ]]; then
-              echo "Release $release_tag is already published; use a new version tag." >&2
+              echo "Hub version $version is already published; increment the Hub version before rebuilding." >&2
               exit 1
             fi
 
@@ -73,7 +63,7 @@ jobs:
           else
             gh release create "$release_tag" \
               --repo "$RELEASE_REPOSITORY" \
-              --target "$SOURCE_REF" \
+              --target "$source_sha" \
               --title "ISpooferMotion Hub $release_tag" \
               --generate-notes \
               --draft
@@ -101,7 +91,7 @@ jobs:
         with:
           repository: ISpooferMotion/ISpooferMotion-Hub
           token: ${{ secrets.PAT }}
-          ref: ${{ inputs.tag_name }}
+          ref: ${{ needs.prepare.outputs.source_sha }}
           path: ISpooferMotion-Hub
 
       - name: Checkout ISpooferMotion-V3
@@ -160,7 +150,7 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           uploadPlainBinary: false
-          assetNamePattern: ISpooferMotion-Hub-[version]-[platform]-[arch][setup][ext]
+          assetNamePattern: ISpooferMotion-[version]-[platform]-[arch][setup][ext]
           args: ${{ matrix.args }}
 
   publish:
