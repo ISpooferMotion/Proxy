@@ -58,7 +58,7 @@ jobs:
       - name: Install Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: latest
 
       - name: Obfuscate Hub Source
         shell: bash
@@ -79,8 +79,9 @@ jobs:
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
         run: |
-          bunx tauri build ${{ matrix.args }}
+          bun run build -- ${{ matrix.args }}
         working-directory: ISpooferMotion-Hub
 
       - name: Upload to Private Repo Release
@@ -90,6 +91,6 @@ jobs:
         run: |
           # Create a draft release on your private repo if it doesn't already exist
           gh release create "${{ github.event.inputs.tag_name }}" --repo ISpooferMotion/ISpooferMotion-Hub --title "ISpooferMotion Hub ${{ github.event.inputs.tag_name }}" --draft || true
-          
+
           # Upload all generated bundles and updater signatures back to your private repo!
-          find ISpooferMotion-Hub/src-tauri/target -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.msi" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.sig" \) -exec gh release upload "${{ github.event.inputs.tag_name }}" {} --repo ISpooferMotion/ISpooferMotion-Hub --clobber \;
+          find ISpooferMotion-Hub/target -type f \( -name "*.dmg" -o -name "*.AppImage" -o -name "*.exe" -o -name "*.msi" -o -name "*.zip" -o -name "*.tar.gz" -o -name "*.sig" \) -exec gh release upload "${{ github.event.inputs.tag_name }}" {} --repo ISpooferMotion/ISpooferMotion-Hub --clobber \;
