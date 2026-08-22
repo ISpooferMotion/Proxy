@@ -116,7 +116,7 @@ jobs:
               updater: {
                 pubkey: process.env.TAURI_PUBLIC_KEY,
                 endpoints: [
-                  "https://ispoofermotion.com/api/v3/updates/hub?os={{target}}&arch={{arch}}"
+                  "https://ispoofermotion.com/api/v3/updates/loader?os={{target}}&arch={{arch}}"
                 ],
                 windows: { installMode: "passive" }
               }
