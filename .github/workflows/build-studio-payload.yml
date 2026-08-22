@@ -56,16 +56,16 @@ jobs:
           SIGNTOOL: ${{ steps.signing.outputs.signtool }}
           THUMBPRINT: ${{ steps.signing.outputs.thumbprint }}
         run: |
-          & $env:SIGNTOOL sign /sha1 $env:THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target/release/ism_studio_payload.dll
+          & $env:SIGNTOOL sign /sha1 $env:THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target/release/ISpooferMotion.dll
           if ($LASTEXITCODE -ne 0) { throw "Studio payload signing failed" }
-          & $env:SIGNTOOL verify /pa /all /v target/release/ism_studio_payload.dll
+          & $env:SIGNTOOL verify /pa /all /v target/release/ISpooferMotion.dll
           if ($LASTEXITCODE -ne 0) { throw "Studio payload signature verification failed" }
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
-          subject-path: source/target/release/ism_studio_payload.dll
+          subject-path: source/target/release/ISpooferMotion.dll
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: component-studio-payload-windows-x86_64
-          path: source/target/release/ism_studio_payload.dll
+          path: source/target/release/ISpooferMotion.dll
           if-no-files-found: error
           retention-days: 7

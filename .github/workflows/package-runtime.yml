@@ -70,7 +70,7 @@ jobs:
           cp "components/daemon/daemon${SUFFIX}" "stage/daemon${SUFFIX}"
           cp "components/ui/ui${SUFFIX}" "stage/ui${SUFFIX}"
           if [[ "$LABEL" == "windows-x86_64" ]]; then
-            cp components/studio/ism_studio_payload.dll stage/ism_studio_payload.dll
+            cp components/studio/ISpooferMotion.dll stage/ISpooferMotion.dll
           else
             chmod 755 stage/daemon stage/ui
           fi
