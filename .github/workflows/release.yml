@@ -1,0 +1,254 @@
+name: ISpooferMotion Release
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+      release_tag:
+        type: string
+        required: true
+    secrets:
+      ISM_HWID_SALT: { required: false }
+      WINDOWS_CERTIFICATE_BASE64: { required: false }
+      WINDOWS_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_CERTIFICATE: { required: false }
+      APPLE_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_SIGNING_IDENTITY: { required: false }
+      APPLE_ID: { required: false }
+      APPLE_PASSWORD: { required: false }
+      APPLE_TEAM_ID: { required: false }
+      TAURI_PRIVATE_KEY: { required: false }
+      TAURI_PRIVATE_KEY_PASSWORD: { required: false }
+      TAURI_PUBLIC_KEY: { required: false }
+      UPDATER_PRIVATE_KEY: { required: false }
+      RELEASE_API_TOKEN: { required: false }
+      RELEASE_API_BASE: { required: false }
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ism-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release contract
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - id: release
+        shell: bash
+        working-directory: source
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$RELEASE_TAG" =~ ^v3\.([1-9]|1[0-2])\.([1-9]|[12][0-9]|3[01])$ ]] || {
+            echo "Release tag must use v3.M.D CalVer" >&2
+            exit 1
+          }
+          version="${RELEASE_TAG#v}"
+          if tag_sha="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}" 2>/dev/null)"; then
+            [[ "$tag_sha" == "$SOURCE_SHA" ]] || {
+              echo "Release tag $RELEASE_TAG points to $tag_sha, not $SOURCE_SHA" >&2
+              exit 1
+            }
+          fi
+          project_version="$(bun scripts/sync-versions.ts --print-current)"
+          [[ "$version" == "$project_version" ]] || {
+            echo "Release tag $RELEASE_TAG does not match project version $project_version" >&2
+            exit 1
+          }
+          bun scripts/release/validate-project-version.ts "$project_version"
+          if release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null)"; then
+            [[ "$(jq -r .isDraft <<<"$release_json")" == "true" ]] || {
+              echo "Release $RELEASE_TAG is already published" >&2
+              exit 1
+            }
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  daemon:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-daemon.yml@main
+    with:
+      source_sha: ${{ inputs.source_sha }}
+    secrets: inherit
+
+  ui:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-ui.yml@main
+    with:
+      source_sha: ${{ inputs.source_sha }}
+    secrets: inherit
+
+  studio-payload:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-studio-payload.yml@main
+    with:
+      source_sha: ${{ inputs.source_sha }}
+    secrets: inherit
+
+  loader:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-loader.yml@main
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      version: ${{ needs.validate.outputs.version }}
+    secrets: inherit
+
+  runtime:
+    needs: [validate, daemon, ui, studio-payload]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/package-runtime.yml@main
+    with:
+      source_sha: ${{ inputs.source_sha }}
+
+  publish:
+    name: Verify and publish complete release
+    needs: [validate, loader, runtime]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+      - working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: runtime-*
+          path: artifacts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: loader-*
+          path: artifacts
+      - name: Stage and verify the complete artifact set
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          node automation/scripts/stage-release-assets.mjs artifacts release-stage "$VERSION"
+          node automation/scripts/generate-loader-manifest.mjs release-stage "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$VERSION"
+          for archive in release-stage/ISpooferMotion-*.zip; do
+            case "$archive" in
+              *windows-x86_64*) platform=Windows ;;
+              *macos-*) platform=macOS ;;
+              *linux-x86_64*) platform=Linux ;;
+              *) echo "Unknown runtime archive: $archive" >&2; exit 1 ;;
+            esac
+            bun source/scripts/release/validate-release-archive.ts "$archive" --platform "$platform"
+          done
+          for signature in release-stage/*.sig; do
+            node automation/scripts/verify-tauri-signature.mjs "${signature%.sig}" "$signature"
+          done
+          (cd release-stage && sha256sum --check SHA256SUMS)
+      - name: Create or refresh isolated draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft >/tmp/release.json 2>/dev/null; then
+            [[ "$(jq -r .isDraft /tmp/release.json)" == "true" ]]
+            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do
+                [[ -z "$asset" ]] || gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+              done
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "ISpooferMotion $RELEASE_TAG" \
+              --generate-notes \
+              --draft
+          fi
+          gh release upload "$RELEASE_TAG" release-stage/* --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Round-trip verify draft release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          mkdir roundtrip
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir roundtrip
+          diff \
+            <(find release-stage -maxdepth 1 -type f -printf '%f\n' | sort) \
+            <(find roundtrip -maxdepth 1 -type f -printf '%f\n' | sort)
+          (cd roundtrip && sha256sum --check SHA256SUMS)
+          cmp release-stage/latest.json roundtrip/latest.json
+      - name: Publish release and updater metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          RELEASE_API_TOKEN: ${{ secrets.RELEASE_API_TOKEN }}
+          RELEASE_API_BASE: ${{ secrets.RELEASE_API_BASE }}
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          if ! node automation/scripts/publish-runtime-updates.mjs \
+            release-stage "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$VERSION" "$RELEASE_API_BASE"; then
+            echo "Updater metadata publication failed; returning the GitHub release to draft." >&2
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=true
+            exit 1
+          fi

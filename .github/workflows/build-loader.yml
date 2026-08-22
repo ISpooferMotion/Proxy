@@ -1,0 +1,233 @@
+name: Build Protected Loader
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+    secrets:
+      ISM_HWID_SALT: { required: false }
+      WINDOWS_CERTIFICATE_BASE64: { required: false }
+      WINDOWS_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_CERTIFICATE: { required: false }
+      APPLE_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_SIGNING_IDENTITY: { required: false }
+      APPLE_ID: { required: false }
+      APPLE_PASSWORD: { required: false }
+      APPLE_TEAM_ID: { required: false }
+      TAURI_PRIVATE_KEY: { required: false }
+      TAURI_PRIVATE_KEY_PASSWORD: { required: false }
+      TAURI_PUBLIC_KEY: { required: false }
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Protected Loader (${{ matrix.label }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: windows-latest
+            label: windows-x86_64
+            bundles: nsis
+          - runner: macos-15-intel
+            label: macos-x86_64
+            bundles: app,dmg
+          - runner: macos-15
+            label: macos-aarch64
+            bundles: app,dmg
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+            bundles: appimage
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          bun: "true"
+          cache-key: protected-loader-${{ matrix.label }}
+          desktop: "true"
+      - name: Install locked release tooling
+        working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Produce deterministic hardened source
+        shell: bash
+        working-directory: source
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          seed=$((16#${SOURCE_SHA:0:15}))
+          bun run scripts/obfuscate.ts \
+            --profile hardened \
+            --seed "$seed" \
+            --target "$GITHUB_WORKSPACE/protected-source"
+          test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
+          test -f "$GITHUB_WORKSPACE/protected-source/apps/loader/src-tauri/Cargo.toml"
+      - name: Install protected workspace tooling
+        working-directory: protected-source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - id: windows-signing
+        if: runner.os == 'Windows'
+        uses: ./automation/.github/actions/import-windows-certificate
+        with:
+          certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - if: runner.os == 'macOS'
+        uses: ./automation/.github/actions/import-apple-certificate
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Create release-only Tauri configuration
+        shell: bash
+        env:
+          RUNNER_PLATFORM: ${{ runner.os }}
+          TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
+        run: |
+          set -euo pipefail
+          test -n "$TAURI_PUBLIC_KEY"
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          const config = {
+            plugins: {
+              updater: {
+                pubkey: process.env.TAURI_PUBLIC_KEY,
+                endpoints: [
+                  "https://ispoofermotion.com/api/v3/updates/hub?os={{target}}&arch={{arch}}"
+                ],
+                windows: { installMode: "passive" }
+              }
+            }
+          };
+          if (process.env.RUNNER_PLATFORM === "Windows") {
+            if (!process.env.WINDOWS_CERTIFICATE_THUMBPRINT) {
+              throw new Error("Windows certificate thumbprint is required");
+            }
+            config.bundle = {
+              windows: {
+                certificateThumbprint: process.env.WINDOWS_CERTIFICATE_THUMBPRINT,
+                digestAlgorithm: "sha256",
+                timestampUrl: "http://timestamp.digicert.com"
+              }
+            };
+          }
+          writeFileSync(
+            "protected-source/apps/loader/src-tauri/tauri.release.conf.json",
+            `${JSON.stringify(config, null, 2)}\n`
+          );
+          NODE
+      - name: Build, sign, and notarize protected Loader
+        working-directory: protected-source/apps/loader
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bun x tauri build --ci --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }} -- -- --locked
+      - name: Stage Windows Loader artifacts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+          SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
+        run: |
+          $bundle = 'protected-source/target/release/bundle/nsis'
+          $installer = @(Get-ChildItem -LiteralPath $bundle -File -Filter '*.exe')
+          if ($installer.Count -ne 1) { throw "Expected exactly one NSIS installer" }
+          $signature = "$($installer[0].FullName).sig"
+          if (-not (Test-Path -LiteralPath $signature)) { throw "NSIS updater signature is missing" }
+          & $env:SIGNTOOL verify /pa /all /v $installer[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw "NSIS Authenticode verification failed" }
+          & $env:SIGNTOOL verify /pa /all /v 'protected-source/target/release/ISpooferMotion.exe'
+          if ($LASTEXITCODE -ne 0) { throw "Loader Authenticode verification failed" }
+          New-Item -ItemType Directory -Path loader-stage -Force | Out-Null
+          $name = "ISpooferMotion-Loader-$env:VERSION-windows-x86_64-setup.exe"
+          Copy-Item -LiteralPath $installer[0].FullName -Destination "loader-stage/$name"
+          Copy-Item -LiteralPath $signature -Destination "loader-stage/$name.sig"
+      - name: Stage macOS Loader artifacts
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          LABEL: ${{ matrix.label }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apps=(protected-source/target/release/bundle/macos/*.app)
+          dmgs=(protected-source/target/release/bundle/dmg/*.dmg)
+          updates=(protected-source/target/release/bundle/macos/*.app.tar.gz)
+          [[ ${#apps[@]} -eq 1 && ${#dmgs[@]} -eq 1 && ${#updates[@]} -eq 1 ]]
+          test -f "${updates[0]}.sig"
+          codesign --verify --deep --strict --verbose=2 "${apps[0]}"
+          spctl --assess --type execute --verbose=2 "${apps[0]}"
+          xcrun stapler validate "${dmgs[0]}"
+          mkdir -p loader-stage
+          cp "${dmgs[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.dmg"
+          cp "${updates[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.app.tar.gz"
+          cp "${updates[0]}.sig" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.app.tar.gz.sig"
+      - name: Stage Linux Loader artifacts
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          appimages=(protected-source/target/release/bundle/appimage/*.AppImage)
+          [[ ${#appimages[@]} -eq 1 ]]
+          test -f "${appimages[0]}.sig"
+          mkdir -p loader-stage
+          cp "${appimages[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-linux-x86_64.AppImage"
+          cp "${appimages[0]}.sig" "loader-stage/ISpooferMotion-Loader-${VERSION}-linux-x86_64.AppImage.sig"
+          chmod 755 loader-stage/*.AppImage
+      - name: Verify Tauri updater signature
+        shell: bash
+        env:
+          TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          artifact="$(find loader-stage -maxdepth 1 -type f ! -name '*.sig' ! -name '*.dmg' | head -n 1)"
+          test -n "$artifact"
+          test -f "${artifact}.sig"
+          node automation/scripts/verify-tauri-signature.mjs "$artifact" "${artifact}.sig"
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: ./loader-stage
+          format: cyclonedx-json
+          output-file: ./loader-stage/ISpooferMotion-Loader-${{ inputs.version }}-${{ matrix.label }}.sbom.cdx.json
+          upload-artifact: false
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: loader-stage/*
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: loader-${{ matrix.label }}
+          path: loader-stage/*
+          if-no-files-found: error
+          retention-days: 7

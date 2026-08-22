@@ -1,0 +1,56 @@
+name: Import Windows signing certificate
+description: Imports a PFX into the ephemeral runner store and locates signtool.
+inputs:
+  certificate-base64:
+    description: Base64-encoded PFX.
+    required: true
+  certificate-password:
+    description: PFX password.
+    required: true
+outputs:
+  thumbprint:
+    description: Imported certificate thumbprint.
+    value: ${{ steps.import.outputs.thumbprint }}
+  signtool:
+    description: Absolute path to signtool.exe.
+    value: ${{ steps.import.outputs.signtool }}
+runs:
+  using: composite
+  steps:
+    - id: import
+      shell: pwsh
+      env:
+        CERTIFICATE_BASE64: ${{ inputs.certificate-base64 }}
+        CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+      run: |
+        if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64)) {
+          throw "WINDOWS_CERTIFICATE_BASE64 is required"
+        }
+        if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_PASSWORD)) {
+          throw "WINDOWS_CERTIFICATE_PASSWORD is required"
+        }
+        $certificatePath = Join-Path $env:RUNNER_TEMP "release-signing.pfx"
+        try {
+          [IO.File]::WriteAllBytes(
+            $certificatePath,
+            [Convert]::FromBase64String($env:CERTIFICATE_BASE64)
+          )
+          $securePassword = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate `
+            -FilePath $certificatePath `
+            -CertStoreLocation Cert:\CurrentUser\My `
+            -Password $securePassword
+          if (-not $certificate -or [string]::IsNullOrWhiteSpace($certificate.Thumbprint)) {
+            throw "Windows signing certificate import failed"
+          }
+        } finally {
+          Remove-Item -LiteralPath $certificatePath -Force -ErrorAction SilentlyContinue
+        }
+        $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" `
+          -Recurse -Filter signtool.exe |
+          Where-Object FullName -Match '\\x64\\signtool.exe$' |
+          Sort-Object FullName |
+          Select-Object -Last 1
+        if (-not $signTool) { throw "signtool.exe not found" }
+        "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+        "signtool=$($signTool.FullName)" >> $env:GITHUB_OUTPUT

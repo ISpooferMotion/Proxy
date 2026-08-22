@@ -1,0 +1,30 @@
+name: Import Apple signing certificate
+description: Imports a distribution certificate into an ephemeral keychain.
+inputs:
+  certificate-base64:
+    description: Base64-encoded P12 certificate.
+    required: true
+  certificate-password:
+    description: P12 password.
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        APPLE_CERTIFICATE: ${{ inputs.certificate-base64 }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+      run: |
+        set -euo pipefail
+        test -n "$APPLE_CERTIFICATE"
+        test -n "$APPLE_CERTIFICATE_PASSWORD"
+        keychain="$RUNNER_TEMP/ispoofermotion-release.keychain-db"
+        certificate="$RUNNER_TEMP/ispoofermotion-release.p12"
+        printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
+        security create-keychain -p temporary "$keychain"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p temporary "$keychain"
+        security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+        security list-keychains -d user -s "$keychain" login.keychain-db
+        security set-key-partition-list -S apple-tool:,apple: -s -k temporary "$keychain"
+        rm -f "$certificate"

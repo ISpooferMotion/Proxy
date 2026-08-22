@@ -1,0 +1,39 @@
+name: Obfuscator Stress
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ism-obfuscator-stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          cache-key: obfuscator-stress
+          desktop: "false"
+      - working-directory: source
+        run: cargo test --locked -p obfuscator numeric_and_mba_1024_seed_semantic_stress -- --ignored
+      - working-directory: source
+        run: cargo test --locked -p obfuscator adversarial_4096_seed_structural_stress -- --ignored

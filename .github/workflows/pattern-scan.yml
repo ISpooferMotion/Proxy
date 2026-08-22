@@ -1,0 +1,80 @@
+name: Studio Pattern Scan
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+    secrets:
+      UPDATER_PRIVATE_KEY: { required: false }
+      RELEASE_API_TOKEN: { required: false }
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ism-studio-pattern-publish
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: windows-latest
+    environment: release
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          cache-key: pattern-scanner-windows-x86_64
+          desktop: "false"
+      - name: Build pattern scanner
+        working-directory: source
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --locked --release -p ism-pattern-scanner
+      - name: Download current Roblox Studio
+        id: studio
+        shell: pwsh
+        run: |
+          $versionHash = (Invoke-RestMethod -Uri 'https://setup.rbxcdn.com/versionQTStudio').Trim()
+          if ($versionHash -notmatch '^version-[a-f0-9]{16}$') { throw "Unexpected Studio version hash" }
+          $zipPath = Join-Path $env:RUNNER_TEMP 'RobloxStudio.zip'
+          $extractPath = Join-Path $env:RUNNER_TEMP "RobloxStudio/$versionHash"
+          Invoke-WebRequest -Uri "https://setup.rbxcdn.com/$versionHash-RobloxStudio.zip" -OutFile $zipPath -UseBasicParsing
+          Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
+          $studioExe = Join-Path $extractPath 'RobloxStudioBeta.exe'
+          if (-not (Test-Path -LiteralPath $studioExe)) { throw "RobloxStudioBeta.exe was not present" }
+          "studio_exe=$studioExe" >> $env:GITHUB_OUTPUT
+          "studio_version=$versionHash" >> $env:GITHUB_OUTPUT
+      - name: Scan and publish signed Studio pattern
+        shell: pwsh
+        working-directory: source
+        env:
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
+          RELEASE_API_TOKEN: ${{ secrets.RELEASE_API_TOKEN }}
+          STUDIO_EXE: ${{ steps.studio.outputs.studio_exe }}
+          STUDIO_VERSION: ${{ steps.studio.outputs.studio_version }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:UPDATER_PRIVATE_KEY)) { throw "UPDATER_PRIVATE_KEY is required" }
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_API_TOKEN)) { throw "RELEASE_API_TOKEN is required" }
+          .\target\release\ism-pattern-scanner.exe `
+            --exe $env:STUDIO_EXE `
+            --studio-version $env:STUDIO_VERSION
+      - name: Upload bounded failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pattern-scan-failure-log
+          path: ${{ runner.temp }}\ism_payload_error.txt
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,139 @@
+name: Build UI
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+    secrets:
+      ISM_HWID_SALT: { required: false }
+      WINDOWS_CERTIFICATE_BASE64: { required: false }
+      WINDOWS_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_CERTIFICATE: { required: false }
+      APPLE_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_SIGNING_IDENTITY: { required: false }
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: UI (${{ matrix.label }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: windows-latest
+            label: windows-x86_64
+            binary: ui.exe
+          - runner: macos-15-intel
+            label: macos-x86_64
+            binary: ui
+          - runner: macos-15
+            label: macos-aarch64
+            binary: ui
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+            binary: ui
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Core
+          ref: 53c8d42697194bd100b7d5ab0e167ffcc73cf2f1
+          path: Core
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          bun: "true"
+          cache-key: ui-${{ matrix.label }}
+          desktop: "true"
+      - name: Build the pinned Core package
+        working-directory: Core
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts
+          bun run build
+          bun run package:pack
+          cp .artifacts/package.tgz ispoofermotion-core-4.0.0.tgz
+      - name: Install locked frontend tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd source
+          bun install --frozen-lockfile --ignore-scripts
+          cd apps/ui
+          bun install --frozen-lockfile --ignore-scripts
+      - id: windows-signing
+        if: runner.os == 'Windows'
+        uses: ./automation/.github/actions/import-windows-certificate
+        with:
+          certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - if: runner.os == 'macOS'
+        uses: ./automation/.github/actions/import-apple-certificate
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Build UI executable
+        working-directory: source/apps/ui
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+        run: bun x tauri build --ci --no-bundle -- -- --locked
+      - name: Sign and verify Windows UI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: source
+        env:
+          SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
+          THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
+        run: |
+          & $env:SIGNTOOL sign /sha1 $env:THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target/release/ui.exe
+          if ($LASTEXITCODE -ne 0) { throw "UI signing failed" }
+          & $env:SIGNTOOL verify /pa /all /v target/release/ui.exe
+          if ($LASTEXITCODE -ne 0) { throw "UI signature verification failed" }
+      - name: Sign and verify macOS UI
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: source
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" target/release/ui
+          codesign --verify --strict --verbose=2 target/release/ui
+      - name: Stage exact UI artifact
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p component
+          cp "target/release/${{ matrix.binary }}" "component/${{ matrix.binary }}"
+          if [[ "$RUNNER_OS" != "Windows" ]]; then chmod 755 "component/${{ matrix.binary }}"; fi
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: source/component/${{ matrix.binary }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: component-ui-${{ matrix.label }}
+          path: source/component/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7
