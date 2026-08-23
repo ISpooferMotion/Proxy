@@ -10,12 +10,15 @@ on:
       ISM_HWID_SALT: { required: false }
       WINDOWS_CERTIFICATE_BASE64: { required: false }
       WINDOWS_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_CERTIFICATE: { required: false }
+      APPLE_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_SIGNING_IDENTITY: { required: false }
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  windows:
     name: Studio payload (windows-x86_64)
     runs-on: windows-latest
     environment: release
@@ -67,5 +70,66 @@ jobs:
         with:
           name: component-studio-payload-windows-x86_64
           path: source/target/release/ISpooferMotion.dll
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: Studio payload (macos-universal)
+    runs-on: macos-15
+    environment: release
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          cache-key: studio-payload-macos-universal
+          desktop: "false"
+      - uses: ./automation/.github/actions/import-apple-certificate
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Build, merge, sign, and verify universal Studio payload
+        shell: bash
+        working-directory: source
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          test -n "$APPLE_SIGNING_IDENTITY"
+          rustup target add x86_64-apple-darwin aarch64-apple-darwin
+          cargo build --locked --release -p ism-studio-payload --target x86_64-apple-darwin
+          cargo build --locked --release -p ism-studio-payload --target aarch64-apple-darwin
+          mkdir -p component
+          lipo -create \
+            target/x86_64-apple-darwin/release/libISpooferMotion.dylib \
+            target/aarch64-apple-darwin/release/libISpooferMotion.dylib \
+            -output component/libISpooferMotion.dylib
+          architectures="$(lipo -archs component/libISpooferMotion.dylib)"
+          [[ " $architectures " == *" x86_64 "* ]]
+          [[ " $architectures " == *" arm64 "* ]]
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" component/libISpooferMotion.dylib
+          codesign --verify --strict --verbose=2 component/libISpooferMotion.dylib
+          otool -L component/libISpooferMotion.dylib
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: source/component/libISpooferMotion.dylib
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: component-studio-payload-macos-universal
+          path: source/component/libISpooferMotion.dylib
           if-no-files-found: error
           retention-days: 7

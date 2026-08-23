@@ -19,9 +19,23 @@ concurrency:
 
 jobs:
   scan:
-    runs-on: windows-latest
+    name: Studio pattern (${{ matrix.label }})
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix:
+        include:
+          - runner: windows-latest
+            label: windows-x86_64
+          - runner: macos-15-intel
+            label: macos-x86_64
+            studio_path: mac
+          - runner: macos-15
+            label: macos-aarch64
+            studio_path: mac/arm64
+    runs-on: ${{ matrix.runner }}
     environment: release
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -35,15 +49,16 @@ jobs:
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
-          cache-key: pattern-scanner-windows-x86_64
+          cache-key: pattern-scanner-${{ matrix.label }}
           desktop: "false"
       - name: Build pattern scanner
         working-directory: source
         env:
-          RUSTFLAGS: -C target-feature=+crt-static
+          RUSTFLAGS: ${{ runner.os == 'Windows' && '-C target-feature=+crt-static' || '' }}
         run: cargo build --locked --release -p ism-pattern-scanner
-      - name: Download current Roblox Studio
-        id: studio
+      - name: Download current Windows Roblox Studio
+        if: runner.os == 'Windows'
+        id: windows-studio
         shell: pwsh
         run: |
           $versionHash = (Invoke-RestMethod -Uri 'https://setup.rbxcdn.com/versionQTStudio').Trim()
@@ -52,29 +67,58 @@ jobs:
           $extractPath = Join-Path $env:RUNNER_TEMP "RobloxStudio/$versionHash"
           Invoke-WebRequest -Uri "https://setup.rbxcdn.com/$versionHash-RobloxStudio.zip" -OutFile $zipPath -UseBasicParsing
           Expand-Archive -LiteralPath $zipPath -DestinationPath $extractPath -Force
-          $studioExe = Join-Path $extractPath 'RobloxStudioBeta.exe'
-          if (-not (Test-Path -LiteralPath $studioExe)) { throw "RobloxStudioBeta.exe was not present" }
-          "studio_exe=$studioExe" >> $env:GITHUB_OUTPUT
+          $studioBinary = Join-Path $extractPath 'RobloxStudioBeta.exe'
+          if (-not (Test-Path -LiteralPath $studioBinary)) { throw "RobloxStudioBeta.exe was not present" }
+          "studio_binary=$studioBinary" >> $env:GITHUB_OUTPUT
           "studio_version=$versionHash" >> $env:GITHUB_OUTPUT
+      - name: Download current macOS Roblox Studio
+        if: runner.os == 'macOS'
+        id: macos-studio
+        shell: bash
+        env:
+          STUDIO_PATH: ${{ matrix.studio_path }}
+        run: |
+          set -euo pipefail
+          metadata="$(curl --fail --silent --show-error https://clientsettingscdn.roblox.com/v2/client-version/MacStudio)"
+          version_hash="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["clientVersionUpload"])' <<<"$metadata")"
+          [[ "$version_hash" =~ ^version-[a-f0-9]{16}$ ]]
+          archive="$RUNNER_TEMP/RobloxStudioApp.zip"
+          extract="$RUNNER_TEMP/RobloxStudio"
+          curl --fail --location --retry 3 --output "$archive" \
+            "https://setup.rbxcdn.com/${STUDIO_PATH}/${version_hash}-RobloxStudioApp.zip"
+          ditto -x -k "$archive" "$extract"
+          studio_app="$(find "$extract" -type d -name RobloxStudio.app -print -quit)"
+          test -n "$studio_app"
+          studio_binary="$studio_app/Contents/MacOS/RobloxStudio"
+          test -f "$studio_binary"
+          studio_version="$(plutil -extract CFBundleVersion raw -o - "$studio_app/Contents/Info.plist")"
+          test -n "$studio_version"
+          echo "studio_binary=$studio_binary" >> "$GITHUB_OUTPUT"
+          echo "studio_version=$studio_version" >> "$GITHUB_OUTPUT"
       - name: Scan and publish signed Studio pattern
-        shell: pwsh
+        shell: bash
         working-directory: source
         env:
           UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
           RELEASE_API_TOKEN: ${{ secrets.RELEASE_API_TOKEN }}
-          STUDIO_EXE: ${{ steps.studio.outputs.studio_exe }}
-          STUDIO_VERSION: ${{ steps.studio.outputs.studio_version }}
+          WINDOWS_STUDIO_BINARY: ${{ steps.windows-studio.outputs.studio_binary }}
+          WINDOWS_STUDIO_VERSION: ${{ steps.windows-studio.outputs.studio_version }}
+          MACOS_STUDIO_BINARY: ${{ steps.macos-studio.outputs.studio_binary }}
+          MACOS_STUDIO_VERSION: ${{ steps.macos-studio.outputs.studio_version }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:UPDATER_PRIVATE_KEY)) { throw "UPDATER_PRIVATE_KEY is required" }
-          if ([string]::IsNullOrWhiteSpace($env:RELEASE_API_TOKEN)) { throw "RELEASE_API_TOKEN is required" }
-          .\target\release\ism-pattern-scanner.exe `
-            --exe $env:STUDIO_EXE `
-            --studio-version $env:STUDIO_VERSION
+          set -euo pipefail
+          test -n "$UPDATER_PRIVATE_KEY"
+          test -n "$RELEASE_API_TOKEN"
+          studio_binary="${WINDOWS_STUDIO_BINARY:-$MACOS_STUDIO_BINARY}"
+          studio_version="${WINDOWS_STUDIO_VERSION:-$MACOS_STUDIO_VERSION}"
+          ./target/release/ism-pattern-scanner${{ runner.os == 'Windows' && '.exe' || '' }} \
+            --exe "$studio_binary" \
+            --studio-version "$studio_version"
       - name: Upload bounded failure diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: pattern-scan-failure-log
-          path: ${{ runner.temp }}\ism_payload_error.txt
+          name: pattern-scan-failure-${{ matrix.label }}
+          path: ${{ runner.temp }}/ism_payload_error.txt
           if-no-files-found: ignore
           retention-days: 7

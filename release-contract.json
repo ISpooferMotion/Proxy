@@ -6,7 +6,6 @@
   "platforms": [
     { "label": "windows-x86_64", "os": "windows", "arch": "x86_64" },
     { "label": "macos-x86_64", "os": "macos", "arch": "x86_64" },
-    { "label": "macos-aarch64", "os": "macos", "arch": "aarch64" },
-    { "label": "linux-x86_64", "os": "linux", "arch": "x86_64" }
+    { "label": "macos-aarch64", "os": "macos", "arch": "aarch64" }
   ]
 }

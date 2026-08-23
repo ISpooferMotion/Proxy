@@ -53,7 +53,6 @@ try {
     `${loaderPrefix}-macos-x86_64.app.tar.gz`,
     `${loaderPrefix}-macos-aarch64.dmg`,
     `${loaderPrefix}-macos-aarch64.app.tar.gz`,
-    `${loaderPrefix}-linux-x86_64.AppImage`,
   ];
   for (const asset of loaderAssets) await put(asset);
   for (const asset of loaderAssets.filter((name) => !name.endsWith(".dmg"))) {
@@ -73,9 +72,15 @@ try {
   );
 
   const manifest = JSON.parse(await readFile(join(stage, "latest.json")));
+  const manifestPlatforms = Object.keys(manifest.platforms).sort();
+  const expectedPlatforms = [
+    "darwin-aarch64",
+    "darwin-x86_64",
+    "windows-x86_64",
+  ];
   if (
     manifest.version !== version ||
-    Object.keys(manifest.platforms).length !== 4
+    JSON.stringify(manifestPlatforms) !== JSON.stringify(expectedPlatforms)
   ) {
     throw new Error("Loader manifest did not preserve the release contract");
   }

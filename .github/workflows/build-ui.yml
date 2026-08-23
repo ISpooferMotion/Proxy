@@ -33,9 +33,6 @@ jobs:
           - runner: macos-15
             label: macos-aarch64
             binary: ui
-          - runner: ubuntu-22.04
-            label: linux-x86_64
-            binary: ui
     runs-on: ${{ matrix.runner }}
     environment: release
     timeout-minutes: 75

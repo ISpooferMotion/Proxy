@@ -39,9 +39,6 @@ for (const name of [
   `${loaderPrefix}-macos-aarch64.app.tar.gz`,
   `${loaderPrefix}-macos-aarch64.app.tar.gz.sig`,
   `${loaderPrefix}-macos-aarch64.sbom.cdx.json`,
-  `${loaderPrefix}-linux-x86_64.AppImage`,
-  `${loaderPrefix}-linux-x86_64.AppImage.sig`,
-  `${loaderPrefix}-linux-x86_64.sbom.cdx.json`,
 ])
   expected.add(name);
 

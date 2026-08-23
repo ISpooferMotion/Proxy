@@ -14,7 +14,6 @@ const platforms = {
   "windows-x86_64": `${prefix}-windows-x86_64-setup.exe`,
   "darwin-x86_64": `${prefix}-macos-x86_64.app.tar.gz`,
   "darwin-aarch64": `${prefix}-macos-aarch64.app.tar.gz`,
-  "linux-x86_64": `${prefix}-linux-x86_64.AppImage`,
 };
 
 const entries = {};

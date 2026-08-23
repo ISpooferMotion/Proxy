@@ -42,9 +42,6 @@ jobs:
           - runner: macos-15
             label: macos-aarch64
             bundles: app,dmg
-          - runner: ubuntu-22.04
-            label: linux-x86_64
-            bundles: appimage
     runs-on: ${{ matrix.runner }}
     environment: release
     timeout-minutes: 120
@@ -191,21 +188,6 @@ jobs:
           cp "${dmgs[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.dmg"
           cp "${updates[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.app.tar.gz"
           cp "${updates[0]}.sig" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.app.tar.gz.sig"
-      - name: Stage Linux Loader artifacts
-        if: runner.os == 'Linux'
-        shell: bash
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          appimages=(protected-source/target/release/bundle/appimage/*.AppImage)
-          [[ ${#appimages[@]} -eq 1 ]]
-          test -f "${appimages[0]}.sig"
-          mkdir -p loader-stage
-          cp "${appimages[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-linux-x86_64.AppImage"
-          cp "${appimages[0]}.sig" "loader-stage/ISpooferMotion-Loader-${VERSION}-linux-x86_64.AppImage.sig"
-          chmod 755 loader-stage/*.AppImage
       - name: Verify Tauri updater signature
         shell: bash
         env:

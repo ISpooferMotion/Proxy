@@ -188,7 +188,6 @@ jobs:
             case "$archive" in
               *windows-x86_64*) platform=Windows ;;
               *macos-*) platform=macOS ;;
-              *linux-x86_64*) platform=Linux ;;
               *) echo "Unknown runtime archive: $archive" >&2; exit 1 ;;
             esac
             bun source/scripts/release/validate-release-archive.ts "$archive" --platform "$platform"
