@@ -120,6 +120,17 @@ jobs:
       source_sha: ${{ inputs.source_sha }}
     secrets: inherit
 
+  mcp-server:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-mcp-server.yml@main
+    with:
+      source_sha: ${{ inputs.source_sha }}
+    secrets: inherit
+
   loader:
     needs: validate
     permissions:
@@ -133,7 +144,7 @@ jobs:
     secrets: inherit
 
   runtime:
-    needs: [validate, daemon, ui, studio-payload]
+    needs: [validate, daemon, ui, mcp-server, studio-payload]
     permissions:
       contents: read
       id-token: write

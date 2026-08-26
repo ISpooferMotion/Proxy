@@ -1,0 +1,110 @@
+name: Build MCP Server
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+    secrets:
+      ISM_HWID_SALT: { required: false }
+      WINDOWS_CERTIFICATE_BASE64: { required: false }
+      WINDOWS_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_CERTIFICATE: { required: false }
+      APPLE_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_SIGNING_IDENTITY: { required: false }
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: MCP Server (${{ matrix.label }})
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: windows-latest
+            label: windows-x86_64
+            binary: mcp-server.exe
+          - runner: macos-15-intel
+            label: macos-x86_64
+            binary: mcp-server
+          - runner: macos-15
+            label: macos-aarch64
+            binary: mcp-server
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          cache-key: mcp-server-${{ matrix.label }}
+          desktop: "true"
+      - id: windows-signing
+        if: runner.os == 'Windows'
+        uses: ./automation/.github/actions/import-windows-certificate
+        with:
+          certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - if: runner.os == 'macOS'
+        uses: ./automation/.github/actions/import-apple-certificate
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Build MCP Server
+        working-directory: source
+        run: cargo build --locked --release -p mcp-server
+      - name: Sign and verify Windows MCP Server
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: source
+        env:
+          SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
+          THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
+        run: |
+          & $env:SIGNTOOL sign /sha1 $env:THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 target/release/mcp-server.exe
+          if ($LASTEXITCODE -ne 0) { throw "MCP Server signing failed" }
+          & $env:SIGNTOOL verify /pa /all /v target/release/mcp-server.exe
+          if ($LASTEXITCODE -ne 0) { throw "MCP Server signature verification failed" }
+      - name: Sign and verify macOS MCP Server
+        if: runner.os == 'macOS'
+        shell: bash
+        working-directory: source
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" target/release/mcp-server
+          codesign --verify --strict --verbose=2 target/release/mcp-server
+      - name: Stage exact MCP Server artifact
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p component
+          cp "target/release/${{ matrix.binary }}" "component/${{ matrix.binary }}"
+          if [[ "$RUNNER_OS" != "Windows" ]]; then chmod 755 "component/${{ matrix.binary }}"; fi
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: source/component/${{ matrix.binary }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: component-mcp-server-${{ matrix.label }}
+          path: source/component/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 7

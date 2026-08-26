@@ -61,6 +61,11 @@ jobs:
         with:
           name: component-studio-payload-macos-universal
           path: components/studio
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: component-mcp-server-*
+          merge-multiple: true
+          path: components/mcp-server
       - name: Stage exact runtime contract
         shell: bash
         env:
@@ -71,11 +76,12 @@ jobs:
           mkdir stage
           cp "components/daemon/daemon${SUFFIX}" "stage/daemon${SUFFIX}"
           cp "components/ui/ui${SUFFIX}" "stage/ui${SUFFIX}"
+          cp "components/mcp-server/mcp-server${SUFFIX}" "stage/mcp-server${SUFFIX}"
           if [[ "$LABEL" == "windows-x86_64" ]]; then
             cp components/studio/ISpooferMotion.dll stage/ISpooferMotion.dll
           else
             cp components/studio/libISpooferMotion.dylib stage/libISpooferMotion.dylib
-            chmod 755 stage/daemon stage/ui stage/libISpooferMotion.dylib
+            chmod 755 stage/daemon stage/ui stage/mcp-server stage/libISpooferMotion.dylib
           fi
       - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
