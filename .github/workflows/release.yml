@@ -62,8 +62,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$RELEASE_TAG" =~ ^v3\.([1-9]|1[0-2])\.([1-9]|[12][0-9]|3[01])$ ]] || {
-            echo "Release tag must use v3.M.D CalVer" >&2
+          [[ "$RELEASE_TAG" =~ ^v3\.[0-9]{4}\.([1-9]|[12][0-9]|3[01])$ ]] || {
+            echo "Release tag must use v3.YYMM.D CalVer" >&2
             exit 1
           }
           version="${RELEASE_TAG#v}"
@@ -78,7 +78,7 @@ jobs:
             echo "Release tag $RELEASE_TAG does not match project version $project_version" >&2
             exit 1
           }
-          bun scripts/release/validate-project-version.ts "$project_version"
+          bun scripts/sync-versions.ts --version "$project_version" --check
           if release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null)"; then
             [[ "$(jq -r .isDraft <<<"$release_json")" == "true" ]] || {
               echo "Release $RELEASE_TAG is already published" >&2

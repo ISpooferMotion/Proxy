@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ISpooferMotion/Core
-          ref: 53c8d42697194bd100b7d5ab0e167ffcc73cf2f1
+          ref: 05264ea85745b9041a01c79d04b986cdaf426787
           path: Core
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
@@ -70,7 +70,7 @@ jobs:
           bun install --frozen-lockfile --ignore-scripts
           bun run build
           bun run package:pack
-          cp .artifacts/package.tgz ispoofermotion-core-4.0.0.tgz
+          cp .artifacts/package.tgz ispoofermotion-core-4.1.1.tgz
       - name: Install locked frontend tooling
         shell: bash
         run: |

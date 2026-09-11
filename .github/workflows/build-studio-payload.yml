@@ -49,9 +49,13 @@ jobs:
           certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
       - name: Build Studio payload
         working-directory: source
+        shell: bash
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
-        run: cargo build --locked --release -p ism-studio-payload
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p ism-dll --features payload
+          cp target/release/ism_dll.dll target/release/ISpooferMotion.dll
       - name: Sign and verify Studio payload
         shell: pwsh
         working-directory: source
@@ -111,12 +115,12 @@ jobs:
           set -euo pipefail
           test -n "$APPLE_SIGNING_IDENTITY"
           rustup target add x86_64-apple-darwin aarch64-apple-darwin
-          cargo build --locked --release -p ism-studio-payload --target x86_64-apple-darwin
-          cargo build --locked --release -p ism-studio-payload --target aarch64-apple-darwin
+          cargo build --locked --release -p ism-dll --features payload --target x86_64-apple-darwin
+          cargo build --locked --release -p ism-dll --features payload --target aarch64-apple-darwin
           mkdir -p component
           lipo -create \
-            target/x86_64-apple-darwin/release/libISpooferMotion.dylib \
-            target/aarch64-apple-darwin/release/libISpooferMotion.dylib \
+            target/x86_64-apple-darwin/release/libism_dll.dylib \
+            target/aarch64-apple-darwin/release/libism_dll.dylib \
             -output component/libISpooferMotion.dylib
           architectures="$(lipo -archs component/libISpooferMotion.dylib)"
           [[ " $architectures " == *" x86_64 "* ]]

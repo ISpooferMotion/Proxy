@@ -1,8 +1,8 @@
 {
   "sourceRepository": "ISpooferMotion/ISpooferMotion-VeeThree",
   "coreRepository": "ISpooferMotion/Core",
-  "coreRef": "53c8d42697194bd100b7d5ab0e167ffcc73cf2f1",
-  "coreVersion": "4.0.0",
+  "coreRef": "05264ea85745b9041a01c79d04b986cdaf426787",
+  "coreVersion": "4.1.1",
   "platforms": [
     { "label": "windows-x86_64", "os": "windows", "arch": "x86_64" },
     { "label": "macos-x86_64", "os": "macos", "arch": "x86_64" },
