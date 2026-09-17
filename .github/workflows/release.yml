@@ -35,7 +35,7 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate release contract
+    name: Validate release
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     outputs:
@@ -154,7 +154,7 @@ jobs:
       source_sha: ${{ inputs.source_sha }}
 
   publish:
-    name: Verify and publish complete release
+    name: Publish release
     needs: [validate, loader, runtime]
     runs-on: ubuntu-22.04
     timeout-minutes: 30
@@ -185,7 +185,7 @@ jobs:
         with:
           pattern: loader-*
           path: artifacts
-      - name: Stage and verify the complete artifact set
+      - name: Stage and verify artifacts
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
@@ -207,7 +207,7 @@ jobs:
             node automation/scripts/verify-tauri-signature.mjs "${signature%.sig}" "$signature"
           done
           (cd release-stage && sha256sum --check SHA256SUMS)
-      - name: Create or refresh isolated draft release
+      - name: Create or update draft release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,7 +230,7 @@ jobs:
               --draft
           fi
           gh release upload "$RELEASE_TAG" release-stage/* --repo "$GITHUB_REPOSITORY" --clobber
-      - name: Round-trip verify draft release assets
+      - name: Verify release assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

@@ -66,7 +66,7 @@ jobs:
           pattern: component-mcp-server-*
           merge-multiple: true
           path: components/mcp-server
-      - name: Stage exact runtime contract
+      - name: Stage runtime components
         shell: bash
         env:
           LABEL: ${{ matrix.label }}
@@ -89,7 +89,7 @@ jobs:
           format: cyclonedx-json
           output-file: ./ISpooferMotion-${{ matrix.label }}.sbom.cdx.json
           upload-artifact: false
-      - name: Package and validate runtime archive
+      - name: Create release archive
         shell: bash
         env:
           LABEL: ${{ matrix.label }}

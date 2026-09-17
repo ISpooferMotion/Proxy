@@ -65,10 +65,10 @@ jobs:
           bun: "true"
           cache-key: protected-loader-${{ matrix.label }}
           desktop: "true"
-      - name: Install locked release tooling
+      - name: Install dependencies
         working-directory: source
         run: bun install --frozen-lockfile --ignore-scripts
-      - name: Produce deterministic hardened source
+      - name: Obfuscate source
         shell: bash
         working-directory: source
         env:
@@ -80,10 +80,11 @@ jobs:
           bun run scripts/obfuscate.ts \
             --profile hardened \
             --seed "$seed" \
-            --target "$GITHUB_WORKSPACE/protected-source"
+            --target "$GITHUB_WORKSPACE/protected-source" \
+            --ts
           test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
           test -f "$GITHUB_WORKSPACE/protected-source/apps/loader/src-tauri/Cargo.toml"
-      - name: Install protected workspace tooling
+      - name: Install protected dependencies
         working-directory: protected-source
         run: bun install --frozen-lockfile --ignore-scripts
       - id: windows-signing
@@ -97,7 +98,7 @@ jobs:
         with:
           certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      - name: Create release-only Tauri configuration
+      - name: Configure Tauri release
         shell: bash
         env:
           RUNNER_PLATFORM: ${{ runner.os }}
@@ -136,7 +137,7 @@ jobs:
             `${JSON.stringify(config, null, 2)}\n`
           );
           NODE
-      - name: Build, sign, and notarize protected Loader
+      - name: Build Loader
         working-directory: protected-source/apps/loader
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}

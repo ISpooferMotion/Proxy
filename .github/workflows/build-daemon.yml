@@ -93,7 +93,7 @@ jobs:
           set -euo pipefail
           codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" target/release/daemon
           codesign --verify --strict --verbose=2 target/release/daemon
-      - name: Stage exact Daemon artifact
+      - name: Stage Daemon artifact
         shell: bash
         working-directory: source
         run: |

@@ -91,7 +91,7 @@ jobs:
           set -euo pipefail
           codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" target/release/mcp-server
           codesign --verify --strict --verbose=2 target/release/mcp-server
-      - name: Stage exact MCP Server artifact
+      - name: Stage MCP Server artifact
         shell: bash
         working-directory: source
         run: |

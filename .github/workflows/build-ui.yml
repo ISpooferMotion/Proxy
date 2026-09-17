@@ -62,7 +62,7 @@ jobs:
           bun: "true"
           cache-key: ui-${{ matrix.label }}
           desktop: "true"
-      - name: Build the pinned Core package
+      - name: Build Core package
         working-directory: Core
         shell: bash
         run: |
@@ -71,11 +71,35 @@ jobs:
           bun run build
           bun run package:pack
           cp .artifacts/package.tgz ispoofermotion-core-4.1.1.tgz
-      - name: Install locked frontend tooling
+      - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
           cd source
+          bun install --frozen-lockfile --ignore-scripts
+          cd apps/ui
+          bun install --frozen-lockfile --ignore-scripts
+      - name: Obfuscate source
+        shell: bash
+        working-directory: source
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          seed=$((16#${SOURCE_SHA:0:15}))
+          bun run scripts/obfuscate.ts \
+            --profile hardened \
+            --seed "$seed" \
+            --target "$GITHUB_WORKSPACE/protected-source" \
+            --ts
+          test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
+          test -f "$GITHUB_WORKSPACE/protected-source/apps/ui/src-tauri/Cargo.toml"
+      - name: Install protected dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd protected-source
           bun install --frozen-lockfile --ignore-scripts
           cd apps/ui
           bun install --frozen-lockfile --ignore-scripts
@@ -91,14 +115,14 @@ jobs:
           certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - name: Build UI executable
-        working-directory: source/apps/ui
+        working-directory: protected-source/apps/ui
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
         run: bun x tauri build --ci --no-bundle -- -- --locked
       - name: Sign and verify Windows UI
         if: runner.os == 'Windows'
         shell: pwsh
-        working-directory: source
+        working-directory: protected-source
         env:
           SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
           THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
@@ -110,16 +134,16 @@ jobs:
       - name: Sign and verify macOS UI
         if: runner.os == 'macOS'
         shell: bash
-        working-directory: source
+        working-directory: protected-source
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           set -euo pipefail
           codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" target/release/ui
           codesign --verify --strict --verbose=2 target/release/ui
-      - name: Stage exact UI artifact
+      - name: Stage UI artifact
         shell: bash
-        working-directory: source
+        working-directory: protected-source
         run: |
           set -euo pipefail
           mkdir -p component
@@ -127,10 +151,10 @@ jobs:
           if [[ "$RUNNER_OS" != "Windows" ]]; then chmod 755 "component/${{ matrix.binary }}"; fi
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
-          subject-path: source/component/${{ matrix.binary }}
+          subject-path: protected-source/component/${{ matrix.binary }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: component-ui-${{ matrix.label }}
-          path: source/component/${{ matrix.binary }}
+          path: protected-source/component/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 7
