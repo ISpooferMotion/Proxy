@@ -7,6 +7,7 @@ on:
         type: string
         required: true
     secrets:
+      PAT: { required: true }
       ISM_HWID_SALT: { required: false }
       WINDOWS_CERTIFICATE_BASE64: { required: false }
       WINDOWS_CERTIFICATE_PASSWORD: { required: false }
@@ -48,8 +49,10 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
+          token: ${{ secrets.PAT }}
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:

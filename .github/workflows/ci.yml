@@ -1,11 +1,19 @@
 name: ISpooferMotion CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full commit SHA from ISpooferMotion-VeeThree
+        type: string
+        required: true
   workflow_call:
     inputs:
       source_sha:
         type: string
         required: true
+    secrets:
+      PAT: { required: true }
 
 permissions:
   contents: read
@@ -31,8 +39,10 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
+          token: ${{ secrets.PAT }}
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
@@ -61,8 +71,10 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
+          token: ${{ secrets.PAT }}
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
@@ -88,8 +100,10 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
+          token: ${{ secrets.PAT }}
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
@@ -113,8 +127,10 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
+          token: ${{ secrets.PAT }}
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

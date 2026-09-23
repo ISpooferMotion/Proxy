@@ -1,6 +1,16 @@
 name: ISpooferMotion Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full commit SHA from ISpooferMotion-VeeThree
+        type: string
+        required: true
+      release_tag:
+        description: Release tag in v3.YYMM.D format
+        type: string
+        required: true
   workflow_call:
     inputs:
       source_sha:
@@ -10,6 +20,7 @@ on:
         type: string
         required: true
     secrets:
+      PAT: { required: true }
       ISM_HWID_SALT: { required: false }
       WINDOWS_CERTIFICATE_BASE64: { required: false }
       WINDOWS_CERTIFICATE_PASSWORD: { required: false }
@@ -43,9 +54,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
           fetch-depth: 0
+          token: ${{ secrets.PAT }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -152,6 +165,7 @@ jobs:
     uses: ISpooferMotion/Proxy/.github/workflows/package-runtime.yml@main
     with:
       source_sha: ${{ inputs.source_sha }}
+    secrets: inherit
 
   publish:
     name: Publish release
@@ -169,8 +183,10 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
+          token: ${{ secrets.PAT }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
@@ -224,7 +240,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --target "$SOURCE_SHA" \
+              --target "$GITHUB_SHA" \
               --title "ISpooferMotion $RELEASE_TAG" \
               --generate-notes \
               --draft

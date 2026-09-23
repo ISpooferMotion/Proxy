@@ -34,8 +34,13 @@ async function assertReleaseContractPins() {
   }
   const workflowFiles = [
     ".github/actions/setup-build/action.yml",
+    ".github/workflows/build-daemon.yml",
+    ".github/workflows/build-loader.yml",
+    ".github/workflows/build-mcp-server.yml",
+    ".github/workflows/build-studio-payload.yml",
     ".github/workflows/build-ui.yml",
     ".github/workflows/ci.yml",
+    ".github/workflows/obfuscator-stress.yml",
     ".github/workflows/package-runtime.yml",
     ".github/workflows/release.yml",
   ];
@@ -64,6 +69,42 @@ async function assertReleaseContractPins() {
     if (!workflows.includes(required)) {
       throw new Error(`Release workflows are missing current pin: ${required}`);
     }
+  }
+  const sourceCheckoutCount =
+    workflows.match(/^\s+path: source\s*$/gm)?.length ?? 0;
+  const privateRepositoryCount =
+    workflows.match(
+      /^\s+repository: ISpooferMotion\/ISpooferMotion-VeeThree\s*$/gm,
+    )?.length ?? 0;
+  const privateTokenCount =
+    workflows.match(/^\s+token: \$\{\{ secrets\.PAT \}\}\s*$/gm)?.length ?? 0;
+  if (
+    sourceCheckoutCount === 0 ||
+    privateRepositoryCount !== sourceCheckoutCount ||
+    privateTokenCount !== sourceCheckoutCount
+  ) {
+    throw new Error(
+      "Every source checkout must read the private V3 repository with PAT",
+    );
+  }
+  for (const dispatchable of [
+    ".github/workflows/ci.yml",
+    ".github/workflows/release.yml",
+  ]) {
+    const contents = await readFile(join(scripts, "..", dispatchable), "utf8");
+    if (!contents.includes("workflow_dispatch:")) {
+      throw new Error(`${dispatchable} cannot run from the public Proxy repository`);
+    }
+  }
+  const releaseWorkflow = await readFile(
+    join(scripts, "..", ".github/workflows/release.yml"),
+    "utf8",
+  );
+  if (
+    !releaseWorkflow.includes('--target "$GITHUB_SHA"') ||
+    releaseWorkflow.includes('--target "$SOURCE_SHA"')
+  ) {
+    throw new Error("Public Proxy releases must target the Proxy workflow commit");
   }
   const publisher = await readFile(
     join(scripts, "publish-runtime-updates.mjs"),
