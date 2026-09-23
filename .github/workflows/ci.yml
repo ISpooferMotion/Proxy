@@ -132,29 +132,15 @@ jobs:
           path: source
           token: ${{ secrets.PAT }}
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ISpooferMotion/Core
-          ref: 3bdf354ed3c1d85e09e3c9c8f320e684dad02d27
-          path: Core
-          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.2
-      - name: Build pinned Core package
-        working-directory: Core
-        run: |
-          bun install --frozen-lockfile --ignore-scripts
-          bun run build
-          bun run package:pack
-          cp .artifacts/package.tgz ispoofermotion-core-4.2.0.tgz
       - name: Install locked dependencies
         run: |
           cd source
           bun install --frozen-lockfile --ignore-scripts
           cd apps/ui
-          # The pinned Core tarball is rebuilt in this run, so refresh only its local-file integrity.
-          bun install --ignore-scripts
+          bun install --frozen-lockfile --ignore-scripts
       - working-directory: source
         run: bun run format
       - working-directory: source

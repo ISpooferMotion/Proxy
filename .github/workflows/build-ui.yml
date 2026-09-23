@@ -57,26 +57,11 @@ jobs:
           path: source
           token: ${{ secrets.PAT }}
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ISpooferMotion/Core
-          ref: 3bdf354ed3c1d85e09e3c9c8f320e684dad02d27
-          path: Core
-          persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
           bun: "true"
           cache-key: ui-${{ matrix.label }}
           desktop: "true"
-      - name: Build Core package
-        working-directory: Core
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun install --frozen-lockfile --ignore-scripts
-          bun run build
-          bun run package:pack
-          cp .artifacts/package.tgz ispoofermotion-core-4.2.0.tgz
       - name: Install dependencies
         shell: bash
         run: |
@@ -84,8 +69,7 @@ jobs:
           cd source
           bun install --frozen-lockfile --ignore-scripts
           cd apps/ui
-          # The pinned Core tarball is rebuilt in this run, so refresh only its local-file integrity.
-          bun install --ignore-scripts
+          bun install --frozen-lockfile --ignore-scripts
       - name: Obfuscate source
         shell: bash
         working-directory: source

@@ -53,6 +53,9 @@ async function assertReleaseContractPins() {
     "1.97.1",
     "bun-version: 1.3.14",
     "ispoofermotion-core-4.1.1.tgz",
+    "repository: ISpooferMotion/Core",
+    "package:pack",
+    "file:../../../Core/",
     "scripts/test/",
   ]) {
     if (workflows.includes(stale)) {
@@ -62,8 +65,6 @@ async function assertReleaseContractPins() {
   for (const required of [
     "1.98.1",
     "bun-version: 1.4.2",
-    contract.coreRef,
-    `ispoofermotion-core-${contract.coreVersion}.tgz`,
     "bun test scripts/tests",
   ]) {
     if (!workflows.includes(required)) {
