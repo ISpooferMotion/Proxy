@@ -21,6 +21,9 @@ permissions:
 jobs:
   build:
     name: UI (${{ matrix.label }})
+    env:
+      WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     strategy:
       fail-fast: true
       matrix:
@@ -107,12 +110,12 @@ jobs:
           cd apps/ui
           bun install --frozen-lockfile --ignore-scripts
       - id: windows-signing
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-windows-certificate
         with:
           certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      - if: runner.os == 'macOS'
+      - if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-apple-certificate
         with:
           certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
@@ -123,7 +126,7 @@ jobs:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
         run: bun x tauri build --ci --no-bundle -- -- --locked
       - name: Sign and verify Windows UI
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
         working-directory: protected-source
         env:
@@ -135,7 +138,7 @@ jobs:
           & $env:SIGNTOOL verify /pa /all /v target/release/ui.exe
           if ($LASTEXITCODE -ne 0) { throw "UI signature verification failed" }
       - name: Sign and verify macOS UI
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
         shell: bash
         working-directory: protected-source
         env:

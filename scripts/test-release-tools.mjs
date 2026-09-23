@@ -106,6 +106,53 @@ async function assertReleaseContractPins() {
   ) {
     throw new Error("Public Proxy releases must target the Proxy workflow commit");
   }
+  const workflowLines = workflows.split(/\r?\n/);
+  for (let index = 0; index < workflowLines.length; index += 1) {
+    const line = workflowLines[index];
+    if (line.includes("import-windows-certificate")) {
+      const guard = workflowLines[index - 1] ?? "";
+      if (
+        !guard.includes("if:") ||
+        !guard.includes("env.WINDOWS_SIGNING_ENABLED == 'true'")
+      ) {
+        throw new Error("Windows certificate import is not optional");
+      }
+    }
+    if (line.includes("import-apple-certificate")) {
+      const guard = workflowLines[index - 1] ?? "";
+      if (
+        !guard.includes("if:") ||
+        !guard.includes("env.APPLE_SIGNING_ENABLED == 'true'")
+      ) {
+        throw new Error("Apple certificate import is not optional");
+      }
+    }
+  }
+  for (const required of [
+    "WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}",
+    "APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}",
+  ]) {
+    if (!workflows.includes(required)) {
+      throw new Error(`Optional signing presence check is missing: ${required}`);
+    }
+  }
+  const loaderWorkflow = await readFile(
+    join(scripts, "..", ".github/workflows/build-loader.yml"),
+    "utf8",
+  );
+  for (const required of [
+    "process.env.WINDOWS_CERTIFICATE_THUMBPRINT",
+    "IsNullOrWhiteSpace($env:SIGNTOOL)",
+    "APPLE_SIGNING_ENABLED",
+    "APPLE_NOTARIZATION_ENABLED",
+  ]) {
+    if (!loaderWorkflow.includes(required)) {
+      throw new Error(`Loader optional signing guard is missing: ${required}`);
+    }
+  }
+  if (loaderWorkflow.includes("Windows certificate thumbprint is required")) {
+    throw new Error("Unsigned Windows Loader builds are still blocked");
+  }
   const publisher = await readFile(
     join(scripts, "publish-runtime-updates.mjs"),
     "utf8",

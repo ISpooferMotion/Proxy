@@ -30,6 +30,10 @@ permissions:
 jobs:
   build:
     name: Protected Loader (${{ matrix.label }})
+    env:
+      WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+      APPLE_NOTARIZATION_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
     strategy:
       fail-fast: true
       matrix:
@@ -91,12 +95,12 @@ jobs:
         working-directory: protected-source
         run: bun install --frozen-lockfile --ignore-scripts
       - id: windows-signing
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-windows-certificate
         with:
           certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      - if: runner.os == 'macOS'
+      - if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-apple-certificate
         with:
           certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
@@ -123,10 +127,10 @@ jobs:
               }
             }
           };
-          if (process.env.RUNNER_PLATFORM === "Windows") {
-            if (!process.env.WINDOWS_CERTIFICATE_THUMBPRINT) {
-              throw new Error("Windows certificate thumbprint is required");
-            }
+          if (
+            process.env.RUNNER_PLATFORM === "Windows" &&
+            process.env.WINDOWS_CERTIFICATE_THUMBPRINT
+          ) {
             config.bundle = {
               windows: {
                 certificateThumbprint: process.env.WINDOWS_CERTIFICATE_THUMBPRINT,
@@ -163,10 +167,12 @@ jobs:
           if ($installer.Count -ne 1) { throw "Expected exactly one NSIS installer" }
           $signature = "$($installer[0].FullName).sig"
           if (-not (Test-Path -LiteralPath $signature)) { throw "NSIS updater signature is missing" }
-          & $env:SIGNTOOL verify /pa /all /v $installer[0].FullName
-          if ($LASTEXITCODE -ne 0) { throw "NSIS Authenticode verification failed" }
-          & $env:SIGNTOOL verify /pa /all /v 'protected-source/target/release/ISpooferMotion.exe'
-          if ($LASTEXITCODE -ne 0) { throw "Loader Authenticode verification failed" }
+          if (-not [string]::IsNullOrWhiteSpace($env:SIGNTOOL)) {
+            & $env:SIGNTOOL verify /pa /all /v $installer[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw "NSIS Authenticode verification failed" }
+            & $env:SIGNTOOL verify /pa /all /v 'protected-source/target/release/ISpooferMotion.exe'
+            if ($LASTEXITCODE -ne 0) { throw "Loader Authenticode verification failed" }
+          }
           New-Item -ItemType Directory -Path loader-stage -Force | Out-Null
           $name = "ISpooferMotion-Loader-$env:VERSION-windows-x86_64-setup.exe"
           Copy-Item -LiteralPath $installer[0].FullName -Destination "loader-stage/$name"
@@ -185,9 +191,13 @@ jobs:
           updates=(protected-source/target/release/bundle/macos/*.app.tar.gz)
           [[ ${#apps[@]} -eq 1 && ${#dmgs[@]} -eq 1 && ${#updates[@]} -eq 1 ]]
           test -f "${updates[0]}.sig"
-          codesign --verify --deep --strict --verbose=2 "${apps[0]}"
-          spctl --assess --type execute --verbose=2 "${apps[0]}"
-          xcrun stapler validate "${dmgs[0]}"
+          if [[ "$APPLE_SIGNING_ENABLED" == "true" ]]; then
+            codesign --verify --deep --strict --verbose=2 "${apps[0]}"
+          fi
+          if [[ "$APPLE_NOTARIZATION_ENABLED" == "true" ]]; then
+            spctl --assess --type execute --verbose=2 "${apps[0]}"
+            xcrun stapler validate "${dmgs[0]}"
+          fi
           mkdir -p loader-stage
           cp "${dmgs[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.dmg"
           cp "${updates[0]}" "loader-stage/ISpooferMotion-Loader-${VERSION}-${LABEL}.app.tar.gz"

@@ -21,6 +21,9 @@ permissions:
 jobs:
   build:
     name: MCP Server (${{ matrix.label }})
+    env:
+      WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     strategy:
       fail-fast: true
       matrix:
@@ -59,12 +62,12 @@ jobs:
           cache-key: mcp-server-${{ matrix.label }}
           desktop: "true"
       - id: windows-signing
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-windows-certificate
         with:
           certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      - if: runner.os == 'macOS'
+      - if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-apple-certificate
         with:
           certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
@@ -73,7 +76,7 @@ jobs:
         working-directory: source
         run: cargo build --locked --release -p mcp-server
       - name: Sign and verify Windows MCP Server
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
         working-directory: source
         env:
@@ -85,7 +88,7 @@ jobs:
           & $env:SIGNTOOL verify /pa /all /v target/release/mcp-server.exe
           if ($LASTEXITCODE -ne 0) { throw "MCP Server signature verification failed" }
       - name: Sign and verify macOS MCP Server
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
         shell: bash
         working-directory: source
         env:
