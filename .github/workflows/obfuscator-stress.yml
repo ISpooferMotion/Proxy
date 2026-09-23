@@ -25,7 +25,7 @@ concurrency:
 jobs:
   stress:
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -41,9 +41,20 @@ jobs:
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
+          bun: "true"
           cache-key: obfuscator-stress
-          desktop: "false"
+          desktop: "true"
       - working-directory: source
         run: cargo test --locked -p obfuscator numeric_and_mba_1024_seed_semantic_stress -- --ignored
       - working-directory: source
         run: cargo test --locked -p obfuscator adversarial_4096_seed_structural_stress -- --ignored
+      - name: Verify complete path-scrambled workspace
+        working-directory: source
+        env:
+          ISM_HWID_SALT: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        run: >-
+          bun scripts/obfuscate.ts
+          --profile hardened
+          --seed 42424242
+          --target "$RUNNER_TEMP/ism-path-scramble"
+          --ts

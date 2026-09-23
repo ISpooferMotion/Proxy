@@ -22,7 +22,7 @@ const scripts = dirname(fileURLToPath(import.meta.url));
 const root = await mkdtemp(join(tmpdir(), "ism-release-tools-"));
 const artifacts = join(root, "artifacts");
 const stage = join(root, "stage");
-const version = "3.2609.21";
+const version = "3.2609.22";
 
 async function assertReleaseContractPins() {
   if (
@@ -152,6 +152,21 @@ async function assertReleaseContractPins() {
   }
   if (loaderWorkflow.includes("Windows certificate thumbprint is required")) {
     throw new Error("Unsigned Windows Loader builds are still blocked");
+  }
+  const obfuscatorWorkflow = await readFile(
+    join(scripts, "..", ".github/workflows/obfuscator-stress.yml"),
+    "utf8",
+  );
+  for (const required of [
+    "Verify complete path-scrambled workspace",
+    "bun scripts/obfuscate.ts",
+    "--profile hardened",
+    "--target \"$RUNNER_TEMP/ism-path-scramble\"",
+    "--ts",
+  ]) {
+    if (!obfuscatorWorkflow.includes(required)) {
+      throw new Error(`Obfuscator path-scramble gate is missing: ${required}`);
+    }
   }
   const publisher = await readFile(
     join(scripts, "publish-runtime-updates.mjs"),

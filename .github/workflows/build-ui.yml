@@ -84,7 +84,8 @@ jobs:
           cd source
           bun install --frozen-lockfile --ignore-scripts
           cd apps/ui
-          bun install --frozen-lockfile --ignore-scripts
+          # The pinned Core tarball is rebuilt in this run, so refresh only its local-file integrity.
+          bun install --ignore-scripts
       - name: Obfuscate source
         shell: bash
         working-directory: source
