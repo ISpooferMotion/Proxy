@@ -3,6 +3,7 @@
   "coreRepository": "ISpooferMotion/Core",
   "coreRef": "3bdf354ed3c1d85e09e3c9c8f320e684dad02d27",
   "coreVersion": "4.2.0",
+  "releasePublicKeyHex": "7cca204c5e75d413d66e43aa4802f2ace3fc17c02671033ea6372f88a0df29f2",
   "platforms": [
     {
       "label": "windows-x86_64",

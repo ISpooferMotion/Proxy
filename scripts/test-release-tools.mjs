@@ -22,7 +22,74 @@ const scripts = dirname(fileURLToPath(import.meta.url));
 const root = await mkdtemp(join(tmpdir(), "ism-release-tools-"));
 const artifacts = join(root, "artifacts");
 const stage = join(root, "stage");
-const version = "3.8.22";
+const version = "3.2609.21";
+
+async function assertReleaseContractPins() {
+  if (
+    contract.coreRef !== "3bdf354ed3c1d85e09e3c9c8f320e684dad02d27" ||
+    contract.coreVersion !== "4.2.0" ||
+    !/^[a-f0-9]{64}$/.test(contract.releasePublicKeyHex)
+  ) {
+    throw new Error("Release contract pins are invalid");
+  }
+  const workflowFiles = [
+    ".github/actions/setup-build/action.yml",
+    ".github/workflows/build-ui.yml",
+    ".github/workflows/ci.yml",
+    ".github/workflows/package-runtime.yml",
+    ".github/workflows/release.yml",
+  ];
+  const workflows = (
+    await Promise.all(
+      workflowFiles.map((path) => readFile(join(scripts, "..", path), "utf8")),
+    )
+  ).join("\n");
+  for (const stale of [
+    "1.97.1",
+    "bun-version: 1.3.14",
+    "ispoofermotion-core-4.1.1.tgz",
+    "scripts/test/",
+  ]) {
+    if (workflows.includes(stale)) {
+      throw new Error(`Release workflows contain stale pin: ${stale}`);
+    }
+  }
+  for (const required of [
+    "1.98.1",
+    "bun-version: 1.4.2",
+    contract.coreRef,
+    `ispoofermotion-core-${contract.coreVersion}.tgz`,
+    "bun test scripts/tests",
+  ]) {
+    if (!workflows.includes(required)) {
+      throw new Error(`Release workflows are missing current pin: ${required}`);
+    }
+  }
+  const publisher = await readFile(
+    join(scripts, "publish-runtime-updates.mjs"),
+    "utf8",
+  );
+  for (const required of [
+    "releasePublicKeyHex",
+    "MAX_ARCHIVE_BYTES",
+    "MAX_API_RESPONSE_BYTES",
+    "ispoofermotion.com HTTPS origin",
+  ]) {
+    if (!publisher.includes(required)) {
+      throw new Error(`Runtime publisher is missing safety contract: ${required}`);
+    }
+  }
+  const runtimeWorkflow = await readFile(
+    join(scripts, "..", ".github/workflows/package-runtime.yml"),
+    "utf8",
+  );
+  if (
+    runtimeWorkflow.includes("pattern: component-mcp-server-*") ||
+    !runtimeWorkflow.includes("name: component-mcp-server-${{ matrix.label }}")
+  ) {
+    throw new Error("Runtime packaging does not select the architecture-specific MCP artifact");
+  }
+}
 
 function run(script, ...args) {
   execFileSync(process.execPath, [join(scripts, script), ...args], {
@@ -37,6 +104,7 @@ async function put(name, contents = name) {
 }
 
 try {
+  await assertReleaseContractPins();
   for (const { label } of contract.platforms) {
     const asset = `ISpooferMotion-${label}.zip`;
     const contents = Buffer.from(`runtime:${label}`);
