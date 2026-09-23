@@ -58,3 +58,8 @@ jobs:
           --seed 42424242
           --target "$RUNNER_TEMP/ism-path-scramble"
           --ts
+      - name: Verify every path-scrambled Rust target
+        working-directory: ${{ runner.temp }}/ism-path-scramble
+        env:
+          ISM_HWID_SALT: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        run: cargo check --locked --workspace --all-targets --all-features

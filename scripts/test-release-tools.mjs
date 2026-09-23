@@ -163,6 +163,8 @@ async function assertReleaseContractPins() {
     "--profile hardened",
     "--target \"$RUNNER_TEMP/ism-path-scramble\"",
     "--ts",
+    "Verify every path-scrambled Rust target",
+    "cargo check --locked --workspace --all-targets --all-features",
   ]) {
     if (!obfuscatorWorkflow.includes(required)) {
       throw new Error(`Obfuscator path-scramble gate is missing: ${required}`);
