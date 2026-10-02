@@ -67,8 +67,12 @@ jobs:
           desktop: "true"
       - name: Install dependencies
         shell: bash
-        working-directory: source
-        run: bun install --frozen-lockfile --ignore-scripts
+        run: |
+          set -euo pipefail
+          cd source
+          bun install --frozen-lockfile --ignore-scripts
+          cd apps/ui
+          bun install --frozen-lockfile --ignore-scripts
       - name: Obfuscate source
         shell: bash
         working-directory: source
@@ -98,6 +102,8 @@ jobs:
         run: |
           set -euo pipefail
           cd protected-source
+          bun install --frozen-lockfile --ignore-scripts
+          cd apps/ui
           bun install --frozen-lockfile --ignore-scripts
       - id: windows-signing
         if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'

@@ -159,6 +159,8 @@ jobs:
           set -euo pipefail
           cd source
           bun install --frozen-lockfile --ignore-scripts
+          cd apps/ui
+          bun install --frozen-lockfile --ignore-scripts
       - name: Check code formatting
         working-directory: source
         run: bun run format
