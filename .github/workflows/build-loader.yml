@@ -23,6 +23,7 @@ on:
       TAURI_PRIVATE_KEY: { required: false }
       TAURI_PRIVATE_KEY_PASSWORD: { required: false }
       TAURI_PUBLIC_KEY: { required: false }
+      UPDATER_PRIVATE_KEY: { required: false }
 
 permissions:
   contents: read
@@ -130,18 +131,19 @@ jobs:
                 ],
                 windows: { installMode: "passive" }
               }
+            },
+            bundle: {
+              createUpdaterArtifacts: true
             }
           };
           if (
             process.env.RUNNER_PLATFORM === "Windows" &&
             process.env.WINDOWS_CERTIFICATE_THUMBPRINT
           ) {
-            config.bundle = {
-              windows: {
-                certificateThumbprint: process.env.WINDOWS_CERTIFICATE_THUMBPRINT,
-                digestAlgorithm: "sha256",
-                timestampUrl: "http://timestamp.digicert.com"
-              }
+            config.bundle.windows = {
+              certificateThumbprint: process.env.WINDOWS_CERTIFICATE_THUMBPRINT,
+              digestAlgorithm: "sha256",
+              timestampUrl: "http://timestamp.digicert.com"
             };
           }
           writeFileSync(
@@ -166,11 +168,15 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
         run: |
           $bundle = 'protected-source/target/release/bundle/nsis'
           $installer = @(Get-ChildItem -LiteralPath $bundle -File -Filter '*.exe')
           if ($installer.Count -ne 1) { throw "Expected exactly one NSIS installer" }
           $signature = "$($installer[0].FullName).sig"
+          if (-not (Test-Path -LiteralPath $signature)) {
+            node automation/scripts/sign-tauri-artifact.mjs $installer[0].FullName $signature
+          }
           if (-not (Test-Path -LiteralPath $signature)) { throw "NSIS updater signature is missing" }
           if (-not [string]::IsNullOrWhiteSpace($env:SIGNTOOL)) {
             & $env:SIGNTOOL verify /pa /all /v $installer[0].FullName
@@ -188,6 +194,7 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
           LABEL: ${{ matrix.label }}
+          UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -195,6 +202,9 @@ jobs:
           dmgs=(protected-source/target/release/bundle/dmg/*.dmg)
           updates=(protected-source/target/release/bundle/macos/*.app.tar.gz)
           [[ ${#apps[@]} -eq 1 && ${#dmgs[@]} -eq 1 && ${#updates[@]} -eq 1 ]]
+          if [[ ! -f "${updates[0]}.sig" ]]; then
+            node automation/scripts/sign-tauri-artifact.mjs "${updates[0]}" "${updates[0]}.sig"
+          fi
           test -f "${updates[0]}.sig"
           if [[ "$APPLE_SIGNING_ENABLED" == "true" ]]; then
             codesign --verify --deep --strict --verbose=2 "${apps[0]}"

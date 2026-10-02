@@ -15,15 +15,25 @@ if (!artifactPath || !signaturePath || !publicKeyValue) {
 function decodeTauriPublicKey(value) {
   let text = value.trim();
   if (!text.includes("\n") && !text.startsWith("untrusted comment:")) {
-    text = Buffer.from(text, "base64").toString("utf8");
+    try {
+      const b64Decoded = Buffer.from(text, "base64").toString("utf8");
+      if (b64Decoded.includes("untrusted comment:") || b64Decoded.includes("minisign")) {
+        text = b64Decoded;
+      }
+    } catch {}
   }
   const line = text
     .split(/\r?\n/)
     .map((part) => part.trim())
-    .find((part) => /^[A-Za-z0-9+/]+={0,2}$/.test(part) && part.length >= 50);
+    .find((part) => /^[A-Za-z0-9+/]+={0,2}$/.test(part) && part.length >= 40);
   if (!line)
     throw new Error("TAURI_PUBLIC_KEY is not a valid minisign public key");
-  const decoded = Buffer.from(line, "base64");
+  let decoded = Buffer.from(line, "base64");
+  if (decoded.length === 44 && decoded.subarray(0, 12).toString("hex") === "302a300506032b6570032100") {
+    const rawPub = decoded.subarray(12);
+    const keyId = rawPub.subarray(0, 8);
+    decoded = Buffer.concat([Buffer.from("Ed"), keyId, rawPub]);
+  }
   if (decoded.length !== 42)
     throw new Error("Tauri public key has an invalid length");
   return decoded;
