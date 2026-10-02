@@ -27,12 +27,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -44,9 +46,11 @@ jobs:
           bun: "true"
           cache-key: obfuscator-stress
           desktop: "true"
-      - working-directory: source
+      - name: Run numeric and MBA semantic stress tests
+        working-directory: source
         run: cargo test --locked -p obfuscator numeric_and_mba_1024_seed_semantic_stress -- --ignored
-      - working-directory: source
+      - name: Run structural stress tests
+        working-directory: source
         run: cargo test --locked -p obfuscator adversarial_4096_seed_structural_stress -- --ignored
       - name: Verify complete path-scrambled workspace
         working-directory: source

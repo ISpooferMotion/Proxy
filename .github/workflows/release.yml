@@ -47,31 +47,35 @@ concurrency:
 jobs:
   validate:
     name: Validate release
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:
       version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
-          fetch-depth: 0
+          fetch-depth: 1
+          fetch-tags: true
           token: ${{ secrets.PAT }}
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
-      - working-directory: source
+      - name: Install dependencies
+        working-directory: source
         run: bun install --frozen-lockfile --ignore-scripts
       - id: release
+        name: Validate release inputs
         shell: bash
         working-directory: source
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PAT }}
         run: |
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
@@ -92,8 +96,8 @@ jobs:
             exit 1
           }
           bun scripts/sync-versions.ts --version "$project_version" --check
-          if release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null)"; then
-            [[ "$(jq -r .isDraft <<<"$release_json")" == "true" ]] || {
+          if release_json="$(gh release view "$RELEASE_TAG" --repo "ISpooferMotion/ISpooferMotion-VeeThree" --json isDraft 2>/dev/null)"; then
+            [[ "$(jq -r .isDraft <<< "$release_json")" == "true" ]] || {
               echo "Release $RELEASE_TAG is already published" >&2
               exit 1
             }
@@ -170,35 +174,41 @@ jobs:
   publish:
     name: Publish release
     needs: [validate, loader, runtime]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release
     permissions:
-      contents: write
+      contents: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           ref: main
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
           token: ${{ secrets.PAT }}
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
-      - working-directory: source
+      - name: Install source dependencies
+        working-directory: source
         run: bun install --frozen-lockfile --ignore-scripts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Download runtime artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: runtime-*
           path: artifacts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Download loader artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: loader-*
           path: artifacts
@@ -211,7 +221,7 @@ jobs:
         run: |
           set -euo pipefail
           node automation/scripts/stage-release-assets.mjs artifacts release-stage "$VERSION"
-          node automation/scripts/generate-loader-manifest.mjs release-stage "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$VERSION"
+          node automation/scripts/generate-loader-manifest.mjs release-stage "ISpooferMotion/ISpooferMotion-VeeThree" "$RELEASE_TAG" "$VERSION"
           for archive in release-stage/ISpooferMotion-*.zip; do
             case "$archive" in
               *windows-x86_64*) platform=Windows ;;

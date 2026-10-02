@@ -28,16 +28,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-15, ubuntu-22.04]
+        os: [windows-latest, macos-15, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -49,14 +51,18 @@ jobs:
           cache-key: ci-platform-${{ matrix.os }}
           components: clippy,rustfmt
           desktop: "true"
-      - if: runner.os == 'Linux'
+      - name: Check Rust formatting
+        if: runner.os == 'Linux'
         working-directory: source
         run: cargo fmt --all -- --check
-      - working-directory: source
+      - name: Cargo check
+        working-directory: source
         run: cargo check --locked -p daemon -p ui --all-targets --all-features
-      - working-directory: source
+      - name: Cargo test
+        working-directory: source
         run: cargo test --locked -p daemon -p ui -p ism-auth -p ism-config -p ism-security -p ism-updater --all-features --no-fail-fast
-      - working-directory: source
+      - name: Cargo clippy
+        working-directory: source
         run: cargo clippy --locked -p daemon -p ui -p ism-auth -p ism-config -p ism-security -p ism-updater --all-targets --all-features -- -D warnings
 
   windows-workspace:
@@ -64,12 +70,14 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -81,24 +89,29 @@ jobs:
           cache-key: ci-windows-workspace
           components: clippy
           desktop: "false"
-      - working-directory: source
+      - name: Cargo check workspace
+        working-directory: source
         run: cargo check --locked --workspace --all-targets --all-features
-      - working-directory: source
+      - name: Cargo test workspace
+        working-directory: source
         run: cargo test --locked --workspace --all-features --no-fail-fast
-      - working-directory: source
+      - name: Cargo clippy workspace
+        working-directory: source
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
   obfuscator:
     name: Obfuscator quality
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -110,47 +123,59 @@ jobs:
           cache-key: ci-obfuscator
           components: clippy
           desktop: "false"
-      - working-directory: source
+      - name: Cargo test obfuscator
+        working-directory: source
         run: cargo test --locked -p obfuscator --all-targets --no-fail-fast
-      - working-directory: source
+      - name: Cargo clippy obfuscator
+        working-directory: source
         run: cargo clippy --locked -p obfuscator --all-targets --all-features -- -D warnings
 
   typescript:
     name: UI and release contracts
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
           token: ${{ secrets.PAT }}
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
       - name: Install locked dependencies
+        shell: bash
         run: |
+          set -euo pipefail
           cd source
           bun install --frozen-lockfile --ignore-scripts
-          cd apps/ui
-          bun install --frozen-lockfile --ignore-scripts
-      - working-directory: source
+      - name: Check code formatting
+        working-directory: source
         run: bun run format
-      - working-directory: source
+      - name: Lint source
+        working-directory: source
         run: bun run lint
-      - working-directory: source
+      - name: Typecheck source
+        working-directory: source
         run: bun run typecheck
-      - run: node automation/scripts/test-release-tools.mjs
-      - working-directory: source
+      - name: Test release tools
+        run: node automation/scripts/test-release-tools.mjs
+      - name: Run script tests
+        working-directory: source
         run: bun test scripts/tests
-      - working-directory: source/apps/ui
+      - name: Lint UI
+        working-directory: source/apps/ui
         run: bun run lint
-      - working-directory: source/apps/ui
+      - name: Build UI
+        working-directory: source/apps/ui
         run: bun run build

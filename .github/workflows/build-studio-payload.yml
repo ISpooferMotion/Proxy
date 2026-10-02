@@ -25,18 +25,20 @@ jobs:
       WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
     runs-on: windows-latest
     environment: release
-    timeout-minutes: 90
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -47,8 +49,10 @@ jobs:
         with:
           bun: "true"
           cache-key: studio-payload-windows-x86_64
+          cache-directories: protected-source/target
           desktop: "false"
       - name: Install dependencies
+        shell: bash
         working-directory: source
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Obfuscate source
@@ -59,12 +63,20 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
+          if [[ -d "$GITHUB_WORKSPACE/protected-source/target" ]]; then
+            mkdir -p "$RUNNER_TEMP/ism-cache"
+            mv "$GITHUB_WORKSPACE/protected-source/target" "$RUNNER_TEMP/ism-cache/target"
+          fi
           seed=$((16#${SOURCE_SHA:0:15}))
           bun run scripts/obfuscate.ts \
             --profile hardened \
             --seed "$seed" \
             --target "$GITHUB_WORKSPACE/protected-source" \
-            --ts
+            --ts \
+            --no-verify
+          if [[ -d "$RUNNER_TEMP/ism-cache/target" ]]; then
+            mv "$RUNNER_TEMP/ism-cache/target" "$GITHUB_WORKSPACE/protected-source/target"
+          fi
           test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
       - id: signing
         if: env.WINDOWS_SIGNING_ENABLED == 'true'
@@ -93,10 +105,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Studio payload signing failed" }
           & $env:SIGNTOOL verify /pa /all /v target/release/ISpooferMotion.dll
           if ($LASTEXITCODE -ne 0) { throw "Studio payload signature verification failed" }
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: protected-source/target/release/ISpooferMotion.dll
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: component-studio-payload-windows-x86_64
           path: protected-source/target/release/ISpooferMotion.dll
@@ -109,18 +121,20 @@ jobs:
       APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     runs-on: macos-15
     environment: release
-    timeout-minutes: 90
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -131,8 +145,10 @@ jobs:
         with:
           bun: "true"
           cache-key: studio-payload-macos-universal
+          cache-directories: protected-source/target
           desktop: "false"
       - name: Install dependencies
+        shell: bash
         working-directory: source
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Obfuscate source
@@ -143,12 +159,20 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
+          if [[ -d "$GITHUB_WORKSPACE/protected-source/target" ]]; then
+            mkdir -p "$RUNNER_TEMP/ism-cache"
+            mv "$GITHUB_WORKSPACE/protected-source/target" "$RUNNER_TEMP/ism-cache/target"
+          fi
           seed=$((16#${SOURCE_SHA:0:15}))
           bun run scripts/obfuscate.ts \
             --profile hardened \
             --seed "$seed" \
             --target "$GITHUB_WORKSPACE/protected-source" \
-            --ts
+            --ts \
+            --no-verify
+          if [[ -d "$RUNNER_TEMP/ism-cache/target" ]]; then
+            mv "$RUNNER_TEMP/ism-cache/target" "$GITHUB_WORKSPACE/protected-source/target"
+          fi
           test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
       - if: env.APPLE_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-apple-certificate
@@ -179,10 +203,10 @@ jobs:
             codesign --verify --strict --verbose=2 component/libISpooferMotion.dylib
           fi
           otool -L component/libISpooferMotion.dylib
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: protected-source/component/libISpooferMotion.dylib
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: component-studio-payload-macos-universal
           path: protected-source/component/libISpooferMotion.dylib

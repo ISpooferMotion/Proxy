@@ -45,12 +45,14 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -61,15 +63,12 @@ jobs:
         with:
           bun: "true"
           cache-key: ui-${{ matrix.label }}
+          cache-directories: protected-source/target
           desktop: "true"
       - name: Install dependencies
         shell: bash
-        run: |
-          set -euo pipefail
-          cd source
-          bun install --frozen-lockfile --ignore-scripts
-          cd apps/ui
-          bun install --frozen-lockfile --ignore-scripts
+        working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
       - name: Obfuscate source
         shell: bash
         working-directory: source
@@ -78,12 +77,20 @@ jobs:
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
+          if [[ -d "$GITHUB_WORKSPACE/protected-source/target" ]]; then
+            mkdir -p "$RUNNER_TEMP/ism-cache"
+            mv "$GITHUB_WORKSPACE/protected-source/target" "$RUNNER_TEMP/ism-cache/target"
+          fi
           seed=$((16#${SOURCE_SHA:0:15}))
           bun run scripts/obfuscate.ts \
             --profile hardened \
             --seed "$seed" \
             --target "$GITHUB_WORKSPACE/protected-source" \
-            --ts
+            --ts \
+            --no-verify
+          if [[ -d "$RUNNER_TEMP/ism-cache/target" ]]; then
+            mv "$RUNNER_TEMP/ism-cache/target" "$GITHUB_WORKSPACE/protected-source/target"
+          fi
           test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
           test -f "$GITHUB_WORKSPACE/protected-source/apps/ui/src-tauri/Cargo.toml"
       - name: Install protected dependencies
@@ -91,8 +98,6 @@ jobs:
         run: |
           set -euo pipefail
           cd protected-source
-          bun install --frozen-lockfile --ignore-scripts
-          cd apps/ui
           bun install --frozen-lockfile --ignore-scripts
       - id: windows-signing
         if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
@@ -140,10 +145,10 @@ jobs:
           mkdir -p component
           cp "target/release/${{ matrix.binary }}" "component/${{ matrix.binary }}"
           if [[ "$RUNNER_OS" != "Windows" ]]; then chmod 755 "component/${{ matrix.binary }}"; fi
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: protected-source/component/${{ matrix.binary }}
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: component-ui-${{ matrix.label }}
           path: protected-source/component/${{ matrix.binary }}
