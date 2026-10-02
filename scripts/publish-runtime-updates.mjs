@@ -119,14 +119,19 @@ for (const platform of contract.platforms) {
   const hash = await hashArchive(join(stage, asset));
   const url = `${apiBase}/api/v3/proxy/update/download?os=${platform.os}&arch=${platform.arch}&version=${encodeURIComponent(tag)}`;
   const sourceUrl = `https://github.com/${repository}/releases/download/${tag}/${asset}`;
-  const signedData = { version: tag, url, hash };
+  const signedData = {
+    os: platform.os,
+    arch: platform.arch,
+    version: tag,
+    url,
+    sourceUrl,
+    hash,
+  };
   const payload = `ISM3\0update-manifest\0${JSON.stringify(signedData)}`;
   const signature = sign(null, Buffer.from(payload), privateKey).toString(
     "base64",
   );
   releases.push({
-    os: platform.os,
-    arch: platform.arch,
     ...signedData,
     source_url: sourceUrl,
     signature,
