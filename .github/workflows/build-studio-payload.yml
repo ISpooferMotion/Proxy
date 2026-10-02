@@ -25,7 +25,7 @@ jobs:
       WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
     runs-on: windows-latest
     environment: release
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -45,8 +45,27 @@ jobs:
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
+          bun: "true"
           cache-key: studio-payload-windows-x86_64
           desktop: "false"
+      - name: Install dependencies
+        working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Obfuscate source
+        shell: bash
+        working-directory: source
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          seed=$((16#${SOURCE_SHA:0:15}))
+          bun run scripts/obfuscate.ts \
+            --profile hardened \
+            --seed "$seed" \
+            --target "$GITHUB_WORKSPACE/protected-source" \
+            --ts
+          test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
       - id: signing
         if: env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-windows-certificate
@@ -54,7 +73,7 @@ jobs:
           certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
           certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
       - name: Build Studio payload
-        working-directory: source
+        working-directory: protected-source
         shell: bash
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
@@ -65,7 +84,7 @@ jobs:
       - name: Sign and verify Studio payload
         if: env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
-        working-directory: source
+        working-directory: protected-source
         env:
           SIGNTOOL: ${{ steps.signing.outputs.signtool }}
           THUMBPRINT: ${{ steps.signing.outputs.thumbprint }}
@@ -76,11 +95,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Studio payload signature verification failed" }
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
-          subject-path: source/target/release/ISpooferMotion.dll
+          subject-path: protected-source/target/release/ISpooferMotion.dll
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: component-studio-payload-windows-x86_64
-          path: source/target/release/ISpooferMotion.dll
+          path: protected-source/target/release/ISpooferMotion.dll
           if-no-files-found: error
           retention-days: 7
 
@@ -90,7 +109,7 @@ jobs:
       APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     runs-on: macos-15
     environment: release
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -110,8 +129,27 @@ jobs:
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
+          bun: "true"
           cache-key: studio-payload-macos-universal
           desktop: "false"
+      - name: Install dependencies
+        working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Obfuscate source
+        shell: bash
+        working-directory: source
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          seed=$((16#${SOURCE_SHA:0:15}))
+          bun run scripts/obfuscate.ts \
+            --profile hardened \
+            --seed "$seed" \
+            --target "$GITHUB_WORKSPACE/protected-source" \
+            --ts
+          test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
       - if: env.APPLE_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-apple-certificate
         with:
@@ -119,7 +157,7 @@ jobs:
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - name: Build, merge, sign, and verify universal Studio payload
         shell: bash
-        working-directory: source
+        working-directory: protected-source
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -143,10 +181,10 @@ jobs:
           otool -L component/libISpooferMotion.dylib
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
-          subject-path: source/component/libISpooferMotion.dylib
+          subject-path: protected-source/component/libISpooferMotion.dylib
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: component-studio-payload-macos-universal
-          path: source/component/libISpooferMotion.dylib
+          path: protected-source/component/libISpooferMotion.dylib
           if-no-files-found: error
           retention-days: 7
