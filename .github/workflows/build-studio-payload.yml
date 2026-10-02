@@ -1,4 +1,4 @@
-name: Build Studio Payload
+name: Build Studio DLL
 
 on:
   workflow_call:
@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   windows:
-    name: Studio payload (windows-x86_64)
+    name: Studio DLL (windows-x86_64)
     env:
       WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
     runs-on: windows-latest
@@ -104,7 +104,7 @@ jobs:
           retention-days: 7
 
   macos:
-    name: Studio payload (macos-universal)
+    name: Studio DLL (macos-universal)
     env:
       APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     runs-on: macos-15

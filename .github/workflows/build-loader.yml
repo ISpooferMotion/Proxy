@@ -1,4 +1,4 @@
-name: Build Protected Loader
+name: Build Loader
 
 on:
   workflow_call:
@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   build:
-    name: Protected Loader (${{ matrix.label }})
+    name: Loader (${{ matrix.label }})
     env:
       WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
       APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
