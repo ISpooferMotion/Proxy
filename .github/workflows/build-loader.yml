@@ -36,7 +36,7 @@ jobs:
       APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
       APPLE_NOTARIZATION_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - runner: windows-latest
@@ -153,15 +153,31 @@ jobs:
           NODE
       - name: Build Loader
         working-directory: protected-source/apps/loader
+        shell: bash
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bun x tauri build --ci --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}
+          RAW_APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          RAW_APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          RAW_APPLE_ID: ${{ secrets.APPLE_ID }}
+          RAW_APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          RAW_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${RAW_APPLE_CERTIFICATE:-}" && -n "${RAW_APPLE_SIGNING_IDENTITY:-}" ]]; then
+            export APPLE_SIGNING_IDENTITY="$RAW_APPLE_SIGNING_IDENTITY"
+          else
+            unset APPLE_SIGNING_IDENTITY
+          fi
+          if [[ -n "${RAW_APPLE_CERTIFICATE:-}" && -n "${RAW_APPLE_ID:-}" && -n "${RAW_APPLE_PASSWORD:-}" && -n "${RAW_APPLE_TEAM_ID:-}" ]]; then
+            export APPLE_ID="$RAW_APPLE_ID"
+            export APPLE_PASSWORD="$RAW_APPLE_PASSWORD"
+            export APPLE_TEAM_ID="$RAW_APPLE_TEAM_ID"
+          else
+            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
+          fi
+          bun x tauri build --ci --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}
       - name: Stage Windows Loader artifacts
         if: runner.os == 'Windows'
         shell: pwsh
