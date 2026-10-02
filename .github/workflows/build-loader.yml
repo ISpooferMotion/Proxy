@@ -92,8 +92,13 @@ jobs:
           test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
           test -f "$GITHUB_WORKSPACE/protected-source/apps/loader/src-tauri/Cargo.toml"
       - name: Install protected dependencies
-        working-directory: protected-source
-        run: bun install --frozen-lockfile --ignore-scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd protected-source
+          bun install --frozen-lockfile --ignore-scripts
+          cd apps/loader
+          bun install --frozen-lockfile --ignore-scripts
       - id: windows-signing
         if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-windows-certificate
@@ -154,7 +159,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: bun x tauri build --ci --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }} -- -- --locked
+        run: bun x tauri build --ci --config src-tauri/tauri.release.conf.json --bundles ${{ matrix.bundles }}
       - name: Stage Windows Loader artifacts
         if: runner.os == 'Windows'
         shell: pwsh

@@ -109,7 +109,7 @@ jobs:
         working-directory: protected-source/apps/ui
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
-        run: bun x tauri build --ci --no-bundle -- -- --locked
+        run: bun x tauri build --ci --no-bundle
       - name: Sign and verify Windows UI
         if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
