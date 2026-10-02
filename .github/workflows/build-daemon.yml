@@ -39,7 +39,7 @@ jobs:
             binary: daemon
     runs-on: ${{ matrix.runner }}
     environment: release
-    timeout-minutes: 60
+    timeout-minutes: 90
     permissions:
       contents: read
       id-token: write
@@ -59,8 +59,27 @@ jobs:
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
+          bun: "true"
           cache-key: daemon-${{ matrix.label }}
           desktop: "true"
+      - name: Install dependencies
+        working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Obfuscate source
+        shell: bash
+        working-directory: source
+        env:
+          ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          seed=$((16#${SOURCE_SHA:0:15}))
+          bun run scripts/obfuscate.ts \
+            --profile hardened \
+            --seed "$seed" \
+            --target "$GITHUB_WORKSPACE/protected-source" \
+            --ts
+          test -f "$GITHUB_WORKSPACE/protected-source/Cargo.toml"
       - id: windows-signing
         if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-windows-certificate
@@ -73,14 +92,14 @@ jobs:
           certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
       - name: Build Daemon
-        working-directory: source
+        working-directory: protected-source
         env:
           ISM_HWID_SALT: ${{ secrets.ISM_HWID_SALT }}
         run: cargo build --locked --release -p daemon
       - name: Sign and verify Windows Daemon
         if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
-        working-directory: source
+        working-directory: protected-source
         env:
           SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
           THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
@@ -92,7 +111,7 @@ jobs:
       - name: Sign and verify macOS Daemon
         if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
         shell: bash
-        working-directory: source
+        working-directory: protected-source
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
@@ -101,7 +120,7 @@ jobs:
           codesign --verify --strict --verbose=2 target/release/daemon
       - name: Stage Daemon artifact
         shell: bash
-        working-directory: source
+        working-directory: protected-source
         run: |
           set -euo pipefail
           mkdir -p component
@@ -109,10 +128,10 @@ jobs:
           if [[ "$RUNNER_OS" != "Windows" ]]; then chmod 755 "component/${{ matrix.binary }}"; fi
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
-          subject-path: source/component/${{ matrix.binary }}
+          subject-path: protected-source/component/${{ matrix.binary }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: component-daemon-${{ matrix.label }}
-          path: source/component/${{ matrix.binary }}
+          path: protected-source/component/${{ matrix.binary }}
           if-no-files-found: error
           retention-days: 7
