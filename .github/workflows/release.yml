@@ -227,35 +227,37 @@ jobs:
       - name: Create or update draft release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PAT }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft >/tmp/release.json 2>/dev/null; then
+          RELEASE_REPO="ISpooferMotion/ISpooferMotion-VeeThree"
+          if gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" --json isDraft >/tmp/release.json 2>/dev/null; then
             [[ "$(jq -r .isDraft /tmp/release.json)" == "true" ]]
-            gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
+            gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" --json assets --jq '.assets[].name' |
               while IFS= read -r asset; do
-                [[ -z "$asset" ]] || gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+                [[ -z "$asset" ]] || gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$RELEASE_REPO" --yes
               done
           else
             gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --target "$GITHUB_SHA" \
+              --repo "$RELEASE_REPO" \
+              --target "$SOURCE_SHA" \
               --title "ISpooferMotion $RELEASE_TAG" \
               --generate-notes \
               --draft
           fi
-          gh release upload "$RELEASE_TAG" release-stage/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" release-stage/* --repo "$RELEASE_REPO" --clobber
       - name: Verify release assets
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PAT }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
+          RELEASE_REPO="ISpooferMotion/ISpooferMotion-VeeThree"
           mkdir roundtrip
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir roundtrip
+          gh release download "$RELEASE_TAG" --repo "$RELEASE_REPO" --dir roundtrip
           diff \
             <(find release-stage -maxdepth 1 -type f -printf '%f\n' | sort) \
             <(find roundtrip -maxdepth 1 -type f -printf '%f\n' | sort)
@@ -264,7 +266,7 @@ jobs:
       - name: Publish release and updater metadata
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.PAT }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           VERSION: ${{ needs.validate.outputs.version }}
           UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
@@ -272,10 +274,11 @@ jobs:
           RELEASE_API_BASE: ${{ secrets.RELEASE_API_BASE }}
         run: |
           set -euo pipefail
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          RELEASE_REPO="ISpooferMotion/ISpooferMotion-VeeThree"
+          gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPO" --draft=false --latest
           if ! node automation/scripts/publish-runtime-updates.mjs \
-            release-stage "$GITHUB_REPOSITORY" "$RELEASE_TAG" "$VERSION" "$RELEASE_API_BASE"; then
+            release-stage "$RELEASE_REPO" "$RELEASE_TAG" "$VERSION" "$RELEASE_API_BASE"; then
             echo "Updater metadata publication failed; returning the GitHub release to draft." >&2
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=true
+            gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPO" --draft=true
             exit 1
           fi
