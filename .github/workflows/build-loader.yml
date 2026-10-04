@@ -177,6 +177,7 @@ jobs:
           RAW_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          rm -rf "$GITHUB_WORKSPACE/protected-source/target/release/bundle"
           if [[ -n "${RAW_APPLE_CERTIFICATE:-}" && -n "${RAW_APPLE_SIGNING_IDENTITY:-}" ]]; then
             export APPLE_SIGNING_IDENTITY="$RAW_APPLE_SIGNING_IDENTITY"
           else
@@ -199,8 +200,14 @@ jobs:
           UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
         run: |
           $bundle = 'protected-source/target/release/bundle/nsis'
-          $installer = @(Get-ChildItem -LiteralPath $bundle -File -Filter '*.exe')
-          if ($installer.Count -ne 1) { throw "Expected exactly one NSIS installer" }
+          $installer = @(Get-ChildItem -LiteralPath $bundle -File -Filter "*$env:VERSION*.exe")
+          if ($installer.Count -eq 0) {
+            $installer = @(Get-ChildItem -LiteralPath $bundle -File -Filter '*.exe')
+          }
+          if ($installer.Count -ne 1) {
+            $found = ($installer | ForEach-Object { $_.FullName }) -join ', '
+            throw "Expected exactly one NSIS installer for version $env:VERSION, found $($installer.Count): $found"
+          }
           $signature = "$($installer[0].FullName).sig"
           if (-not (Test-Path -LiteralPath $signature)) {
             node automation/scripts/sign-tauri-artifact.mjs $installer[0].FullName $signature
@@ -227,8 +234,14 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           apps=(protected-source/target/release/bundle/macos/*.app)
-          dmgs=(protected-source/target/release/bundle/dmg/*.dmg)
-          updates=(protected-source/target/release/bundle/macos/*.app.tar.gz)
+          dmgs=(protected-source/target/release/bundle/dmg/*"${VERSION}"*.dmg)
+          if [[ ${#dmgs[@]} -eq 0 ]]; then
+            dmgs=(protected-source/target/release/bundle/dmg/*.dmg)
+          fi
+          updates=(protected-source/target/release/bundle/macos/*"${VERSION}"*.app.tar.gz)
+          if [[ ${#updates[@]} -eq 0 ]]; then
+            updates=(protected-source/target/release/bundle/macos/*.app.tar.gz)
+          fi
           [[ ${#apps[@]} -eq 1 && ${#dmgs[@]} -eq 1 && ${#updates[@]} -eq 1 ]]
           if [[ ! -f "${updates[0]}.sig" ]]; then
             node automation/scripts/sign-tauri-artifact.mjs "${updates[0]}" "${updates[0]}.sig"
