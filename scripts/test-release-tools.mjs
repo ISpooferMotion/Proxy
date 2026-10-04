@@ -26,8 +26,12 @@ const version = "3.2609.22";
 
 async function assertReleaseContractPins() {
   if (
-    contract.coreRef !== "3bdf354ed3c1d85e09e3c9c8f320e684dad02d27" ||
-    contract.coreVersion !== "4.2.0" ||
+    contract.coreRef !== "7a765a6f9d4754bf1dfc1640de6f9566b098d441" ||
+    contract.coreVersion !== "4.3.0" ||
+    contract.corePackageUrl !==
+      "https://github.com/ISpooferMotion/Core/releases/download/v4.3.0/package.tgz" ||
+    contract.corePackageSha256 !==
+      "f3c28495ba663c2d732d107c2caecb8b0329b5eb5fdf5d4b043070c1707cb72a" ||
     !/^[a-f0-9]{64}$/.test(contract.releasePublicKeyHex)
   ) {
     throw new Error("Release contract pins are invalid");
@@ -102,10 +106,10 @@ async function assertReleaseContractPins() {
     "utf8",
   );
   if (
-    !releaseWorkflow.includes('--target "$GITHUB_SHA"') ||
-    releaseWorkflow.includes('--target "$SOURCE_SHA"')
+    !releaseWorkflow.includes('--target "$SOURCE_SHA"') ||
+    releaseWorkflow.includes('--target "$GITHUB_SHA"')
   ) {
-    throw new Error("Public Proxy releases must target the Proxy workflow commit");
+    throw new Error("Product releases must target the contracted source commit");
   }
   const workflowLines = workflows.split(/\r?\n/);
   for (let index = 0; index < workflowLines.length; index += 1) {
@@ -185,6 +189,23 @@ async function assertReleaseContractPins() {
     if (!publisher.includes(required)) {
       throw new Error(`Runtime publisher is missing safety contract: ${required}`);
     }
+  }
+  const coreVerifier = await readFile(
+    join(scripts, "verify-core-package.mjs"),
+    "utf8",
+  );
+  for (const required of [
+    "corePackageUrl",
+    "corePackageSha256",
+    "@ispoofermotion/core",
+    "sha512-",
+  ]) {
+    if (!coreVerifier.includes(required)) {
+      throw new Error(`Core package verifier is missing contract check: ${required}`);
+    }
+  }
+  if (!workflows.includes("verify-core-package.mjs")) {
+    throw new Error("Release workflows do not verify the pinned Core package");
   }
   const runtimeWorkflow = await readFile(
     join(scripts, "..", ".github/workflows/package-runtime.yml"),
