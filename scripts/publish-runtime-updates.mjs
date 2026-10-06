@@ -132,8 +132,12 @@ for (const platform of contract.platforms) {
     "base64",
   );
   releases.push({
-    ...signedData,
-    source_url: sourceUrl,
+    os: signedData.os,
+    arch: signedData.arch,
+    version: signedData.version,
+    url: signedData.url,
+    source_url: signedData.sourceUrl,
+    hash: signedData.hash,
     signature,
   });
 }

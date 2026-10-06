@@ -185,10 +185,16 @@ async function assertReleaseContractPins() {
     "MAX_ARCHIVE_BYTES",
     "MAX_API_RESPONSE_BYTES",
     "ispoofermotion.com HTTPS origin",
+    "source_url: signedData.sourceUrl",
   ]) {
     if (!publisher.includes(required)) {
       throw new Error(`Runtime publisher is missing safety contract: ${required}`);
     }
+  }
+  if (/releases\.push\(\{[\s\S]*?\.\.\.signedData/.test(publisher)) {
+    throw new Error(
+      "Runtime publisher must not send signedData directly; the release API only accepts source_url on POST",
+    );
   }
   const coreVerifier = await readFile(
     join(scripts, "verify-core-package.mjs"),
