@@ -6,6 +6,11 @@ on:
       source_sha:
         type: string
         required: true
+      test_build:
+        description: Compile an offline test build that never installs production runtime updates
+        type: boolean
+        required: false
+        default: false
       create_deployment:
         description: Create GitHub deployment events for release builds; set false for downloadable test builds
         type: boolean
@@ -27,6 +32,7 @@ jobs:
   windows:
     name: Studio DLL (windows-x86_64)
     env:
+      ISM_PACKAGED_TEST_BUILD: ${{ inputs.test_build && '1' || '0' }}
       WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
     runs-on: windows-latest
     environment:
@@ -125,6 +131,7 @@ jobs:
   macos:
     name: Studio DLL (macos-universal)
     env:
+      ISM_PACKAGED_TEST_BUILD: ${{ inputs.test_build && '1' || '0' }}
       APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
     runs-on: macos-15
     environment:

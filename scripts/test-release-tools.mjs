@@ -249,6 +249,15 @@ async function assertReleaseContractPins() {
   if (testCallCount !== 5) {
     throw new Error("All five reusable test build calls must disable deployments");
   }
+  if ((testWorkflow.match(/^      test_build: true$/gm)?.length ?? 0) !== 5) {
+    throw new Error("All five test jobs must compile with the offline test build flag");
+  }
+  for (const file of ["build-daemon.yml", "build-ui.yml", "build-mcp-server.yml", "build-loader.yml", "build-studio-payload.yml"]) {
+    const content = await readFile(join(scripts, "..", ".github/workflows", file), "utf8");
+    if (!content.includes("ISM_PACKAGED_TEST_BUILD: ${{ inputs.test_build && '1' || '0' }}")) {
+      throw new Error(`${file} must use a compile-time test flag`);
+    }
+  }
   const testStager = await readFile(join(scripts, "stage-test-builds.mjs"), "utf8");
   if (/BUILD_INFO\.md|writeFile\([^)]*\.md/i.test(testStager)) {
     throw new Error("Test staging must not generate Markdown build reports");
@@ -313,9 +322,19 @@ try {
   await assertReleaseContractPins();
   for (const { label } of contract.platforms) {
     const asset = `ISpooferMotion-${label}.zip`;
-    const contents = Buffer.from(`runtime:${label}`);
-    const digest = createHash("sha256").update(contents).digest("hex");
-    await put(asset, contents);
+    const isWindows = label === "windows-x86_64";
+    const components = isWindows
+      ? ["daemon.exe", "ui.exe", "mcp-server.exe", "ISpooferMotion.dll"]
+      : ["daemon", "ui", "mcp-server", "libISpooferMotion.dylib"];
+    const runtimePath = join(artifacts, asset.slice(0, 3), asset);
+    await mkdir(dirname(runtimePath), { recursive: true });
+    execFileSync("python3", ["-c", `
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:
+    for component in sys.argv[2:]:
+        archive.writestr(component, (component + ':fixture').encode('utf8'))
+`, runtimePath, ...components]);
+    const digest = createHash("sha256").update(await readFile(runtimePath)).digest("hex");
     await put(`${asset}.sha256`, `${digest}  ${asset}\n`);
     await put(`ISpooferMotion-${label}.sbom.cdx.json`, "{}\n");
   }
@@ -329,6 +348,7 @@ try {
     `${loaderPrefix}-macos-aarch64.app.tar.gz`,
   ];
   for (const asset of loaderAssets) await put(asset);
+  await put(`${loaderPrefix}-windows-x86_64.exe`, "signed-portable-loader");
   for (const asset of loaderAssets.filter((name) => !name.endsWith(".dmg"))) {
     await put(`${asset}.sig`, Buffer.alloc(64, 7).toString("base64"));
   }
@@ -337,11 +357,10 @@ try {
   }
 
   const testStage = join(root, "test-builds");
-  run("stage-test-builds.mjs", artifacts, testStage);
+  run("stage-test-builds.mjs", artifacts, testStage, version);
   const testFiles = await readdir(testStage);
   const expectedTestFiles = [
-    ...contract.platforms.map(({ label }) => `ISpooferMotion-${label}.zip`),
-    ...loaderAssets.filter((name) => name.endsWith("-setup.exe") || name.endsWith(".dmg")),
+    ...contract.platforms.map(({ label }) => `ISpooferMotion-${version}-${label}-test.zip`),
     "SHA256SUMS",
   ].sort();
   if (JSON.stringify(testFiles.sort()) !== JSON.stringify(expectedTestFiles)) {
@@ -350,6 +369,37 @@ try {
   if (testFiles.some((name) => name.toLowerCase().endsWith(".md"))) {
     throw new Error("Test stage unexpectedly contains a Markdown file");
   }
+  // Verify the exact portable layout, integrity hashes, and paired version markers.
+  for (const { label } of contract.platforms) {
+    const output = join(testStage, `ISpooferMotion-${version}-${label}-test.zip`);
+    const layout = JSON.parse(execFileSync("python3", ["-c", `
+import hashlib, json, sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    names = archive.namelist()
+    manifest = json.loads(archive.read('bin/.ispoofermotion-install-integrity.json'))
+    print(json.dumps({'names': names, 'manifest': manifest,
+       'digest_ok': all(hashlib.sha256(archive.read('bin/' + name)).hexdigest() == h
+                       for name, h in manifest['components'].items()),
+       'daemon_version': archive.read('bin/.ispoofermotion-daemon-version').decode().strip(),
+       'ui_version': archive.read('bin/.ispoofermotion-ui-version').decode().strip()}))
+`, output], { encoding: "utf8" }));
+    if (layout.manifest.version !== version || !layout.digest_ok ||
+        layout.daemon_version !== version || layout.ui_version !== version) {
+      throw new Error(`Invalid offline integrity contract: ${label}`);
+    }
+    const names = new Set(layout.names);
+    const loaderName = label === "windows-x86_64"
+      ? "ISpooferMotion.exe"
+      : `${loaderPrefix}-${label}.dmg`;
+    if (!names.has(loaderName) || !names.has("bin/.ispoofermotion-install-integrity.json") ||
+        names.size !== (label === "windows-x86_64" ? 8 : 9)) {
+      throw new Error(`Invalid portable test archive layout: ${label}`);
+    }
+    if (label !== "windows-x86_64" && !names.has("INSTALL-MACOS.txt")) {
+      throw new Error(`macOS test bundle is missing offline installation instructions: ${label}`);
+    }
+  }
+
   for (const line of (await readFile(join(testStage, "SHA256SUMS"), "utf8")).trim().split("\n")) {
     const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
     if (!match || !testFiles.includes(match[2])) {
@@ -357,6 +407,38 @@ try {
     }
     const digest = createHash("sha256").update(await readFile(join(testStage, match[2]))).digest("hex");
     if (digest !== match[1]) throw new Error(`Test-stage checksum mismatch: ${match[2]}`);
+  }
+
+  // A valid checksum is not sufficient if the runtime archive has extra or unsafe entries.
+  const sampleLabel = "windows-x86_64";
+  const sampleName = `ISpooferMotion-${sampleLabel}.zip`;
+  const samplePath = join(artifacts, sampleName.slice(0, 3), sampleName);
+  const checksumPath = join(artifacts, `${sampleName}.sha256`.slice(0, 3), `${sampleName}.sha256`);
+  const originalRuntime = await readFile(samplePath);
+  const originalChecksum = await readFile(checksumPath);
+  const failureStage = join(root, "rejected-test-builds");
+  try {
+    await writeFile(checksumPath, `${"0".repeat(64)}  ${sampleName}\n`);
+    let rejected = false;
+    try { run("stage-test-builds.mjs", artifacts, failureStage, version); }
+    catch { rejected = true; }
+    if (!rejected) throw new Error("Test packages accepted a tampered runtime checksum");
+
+    await writeFile(checksumPath, originalChecksum);
+    execFileSync("python3", ["-c", `
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as archive:
+    archive.writestr('../escaped-file.exe', b'untrusted')
+`, samplePath]);
+    const maliciousDigest = createHash("sha256").update(await readFile(samplePath)).digest("hex");
+    await writeFile(checksumPath, `${maliciousDigest}  ${sampleName}\n`);
+    rejected = false;
+    try { run("stage-test-builds.mjs", artifacts, failureStage, version); }
+    catch { rejected = true; }
+    if (!rejected) throw new Error("Test packages accepted an unsafe ZIP member");
+  } finally {
+    await writeFile(samplePath, originalRuntime);
+    await writeFile(checksumPath, originalChecksum);
   }
 
   run("stage-release-assets.mjs", artifacts, stage, version);

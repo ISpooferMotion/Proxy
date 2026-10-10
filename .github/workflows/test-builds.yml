@@ -63,6 +63,7 @@ jobs:
     with:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       create_deployment: false
+      test_build: true
     secrets: inherit
 
   ui:
@@ -75,6 +76,7 @@ jobs:
     with:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       create_deployment: false
+      test_build: true
     secrets: inherit
 
   studio-payload:
@@ -87,6 +89,7 @@ jobs:
     with:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       create_deployment: false
+      test_build: true
     secrets: inherit
 
   mcp-server:
@@ -99,6 +102,7 @@ jobs:
     with:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       create_deployment: false
+      test_build: true
     secrets: inherit
 
   loader:
@@ -112,6 +116,7 @@ jobs:
       source_sha: ${{ needs.validate.outputs.source_sha }}
       version: ${{ needs.validate.outputs.version }}
       create_deployment: false
+      test_build: true
     secrets: inherit
 
   runtime:
@@ -155,7 +160,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p test-builds
-          node automation/scripts/stage-test-builds.mjs artifacts test-builds
+          node automation/scripts/stage-test-builds.mjs artifacts test-builds "${{ needs.validate.outputs.version }}"
       - name: Upload test builds to the private source repository
         shell: bash
         env:
