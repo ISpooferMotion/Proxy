@@ -124,4 +124,4 @@ jobs:
             ISpooferMotion-${{ matrix.label }}.zip.sha256
             ISpooferMotion-${{ matrix.label }}.sbom.cdx.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

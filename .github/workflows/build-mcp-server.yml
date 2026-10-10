@@ -151,4 +151,4 @@ jobs:
           name: component-mcp-server-${{ matrix.label }}
           path: protected-source/component/${{ matrix.binary }}
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

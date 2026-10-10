@@ -120,7 +120,7 @@ jobs:
           name: component-studio-payload-windows-x86_64
           path: protected-source/target/release/ISpooferMotion.dll
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   macos:
     name: Studio DLL (macos-universal)
@@ -220,4 +220,4 @@ jobs:
           name: component-studio-payload-macos-universal
           path: protected-source/component/libISpooferMotion.dylib
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

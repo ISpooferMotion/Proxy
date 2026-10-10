@@ -290,4 +290,4 @@ jobs:
           name: loader-${{ matrix.label }}
           path: loader-stage/*
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1

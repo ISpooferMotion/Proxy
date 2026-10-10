@@ -224,22 +224,26 @@ async function assertReleaseContractPins() {
     throw new Error("Runtime packaging does not select the architecture-specific MCP artifact");
   }
 
-  // Test builds are manually distributed Actions artifacts, never release deployments.
+  // Test builds publish finished packages to the private source repository,
+  // never as downloadable artifacts on the public automation repository.
   const testWorkflow = await readFile(
     join(scripts, "..", ".github/workflows/test-builds.yml"),
     "utf8",
   );
   if (
     !testWorkflow.includes("workflow_dispatch:") ||
-    !testWorkflow.includes("Upload test build artifacts for download") ||
-    !testWorkflow.includes("retention-days: 30") ||
-    !testWorkflow.includes("test-builds/ISpooferMotion-*.zip") ||
-    !testWorkflow.includes("test-builds/*-setup.exe") ||
-    !testWorkflow.includes("test-builds/*.dmg") ||
+    !testWorkflow.includes("uses: ISpooferMotion/Proxy/.github/workflows/package-runtime.yml@main") ||
+    !testWorkflow.includes("uses: ISpooferMotion/Proxy/.github/workflows/build-loader.yml@main") ||
+    !testWorkflow.includes('repository="ISpooferMotion/ISpooferMotion-VeeThree"') ||
+    !testWorkflow.includes('tag="test-build-${SHORT_SHA}"') ||
+    !testWorkflow.includes('gh release upload "$tag" test-builds/*') ||
+    !testWorkflow.includes("--draft") ||
+    !testWorkflow.includes("--prerelease") ||
+    /actions\/upload-artifact|retention-days:/i.test(testWorkflow) ||
     testWorkflow.includes("BUILD_INFO.md") ||
-    /(?:discord(?:app)?\.com\/api|DISCORD_WEBHOOK|gh release |publish-runtime-updates\.mjs)/i.test(testWorkflow)
+    /(?:discord(?:app)?\.com\/api|DISCORD_WEBHOOK|publish-runtime-updates\.mjs)/i.test(testWorkflow)
   ) {
-    throw new Error("Test builds must only produce manually downloadable Actions artifacts");
+    throw new Error("Test builds must publish only to a private V3 draft release");
   }
   const testCallCount = testWorkflow.match(/^      create_deployment: false$/gm)?.length ?? 0;
   if (testCallCount !== 5) {
@@ -248,6 +252,26 @@ async function assertReleaseContractPins() {
   const testStager = await readFile(join(scripts, "stage-test-builds.mjs"), "utf8");
   if (/BUILD_INFO\.md|writeFile\([^)]*\.md/i.test(testStager)) {
     throw new Error("Test staging must not generate Markdown build reports");
+  }
+
+  const cleanupWorkflow = await readFile(
+    join(scripts, "..", ".github/workflows/purge-build-records.yml"),
+    "utf8",
+  );
+  for (const required of [
+    "workflow_run:",
+    "ISpooferMotion Test Builds",
+    "ISpooferMotion Release",
+    "ISpooferMotion CI",
+    "Obfuscator Stress",
+    "actions: write",
+    "/actions/artifacts/${artifact_id}",
+    "/actions/runs/${TARGET_RUN_ID}",
+    "purge-build-records.yml/runs?status=completed",
+  ]) {
+    if (!cleanupWorkflow.includes(required)) {
+      throw new Error(`Build-record cleanup is missing: ${required}`);
+    }
   }
   for (const file of [
     "build-daemon.yml",
@@ -264,6 +288,12 @@ async function assertReleaseContractPins() {
     ) {
       throw new Error(`${file} must preserve deployments for release builds and disable them for tests`);
     }
+    if (!contents.includes("retention-days: 1")) {
+      throw new Error(`${file} must use the minimum fallback artifact retention`);
+    }
+  }
+  if (!runtimeWorkflow.includes("retention-days: 1")) {
+    throw new Error("Runtime packages must use the minimum fallback artifact retention");
   }
 }
 

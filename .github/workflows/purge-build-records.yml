@@ -1,0 +1,57 @@
+name: Purge Build Records
+
+on:
+  workflow_run:
+    workflows:
+      - ISpooferMotion Test Builds
+      - ISpooferMotion Release
+      - ISpooferMotion CI
+      - Obfuscator Stress
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: purge-proxy-build-records
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    name: Remove artifacts and run history
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_RUN_ID: ${{ github.event.workflow_run.id }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Delete transient artifacts and source-bearing run
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api --paginate \
+            "/repos/${REPOSITORY}/actions/runs/${TARGET_RUN_ID}/artifacts?per_page=100" \
+            --jq '.artifacts[].id' |
+            while IFS= read -r artifact_id; do
+              [[ -z "$artifact_id" ]] || gh api --method DELETE \
+                "/repos/${REPOSITORY}/actions/artifacts/${artifact_id}"
+            done
+
+          gh api --method DELETE "/repos/${REPOSITORY}/actions/runs/${TARGET_RUN_ID}"
+
+      - name: Remove older cleanup history
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api --paginate \
+            "/repos/${REPOSITORY}/actions/workflows/purge-build-records.yml/runs?status=completed&per_page=100" \
+            --jq '.workflow_runs[].id' |
+            while IFS= read -r run_id; do
+              if [[ -n "$run_id" && "$run_id" != "$GITHUB_RUN_ID" ]]; then
+                gh api --method DELETE "/repos/${REPOSITORY}/actions/runs/${run_id}"
+              fi
+            done

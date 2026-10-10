@@ -125,11 +125,13 @@ jobs:
       source_sha: ${{ needs.validate.outputs.source_sha }}
     secrets: inherit
 
-  package-test-artifacts:
-    name: Package test build artifacts
+  publish-test-builds:
+    name: Publish private test builds
     needs: [validate, loader, runtime]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
       - name: Checkout automation scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -154,14 +156,33 @@ jobs:
           set -euo pipefail
           mkdir -p test-builds
           node automation/scripts/stage-test-builds.mjs artifacts test-builds
-      - name: Upload test build artifacts for download
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ISpooferMotion-Test-Builds-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.short_sha }}
-          path: |
-            test-builds/ISpooferMotion-*.zip
-            test-builds/*-setup.exe
-            test-builds/*.dmg
-            test-builds/SHA256SUMS
-          if-no-files-found: error
-          retention-days: 30
+      - name: Upload test builds to the private source repository
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          SHORT_SHA: ${{ needs.validate.outputs.short_sha }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          repository="ISpooferMotion/ISpooferMotion-VeeThree"
+          tag="test-build-${SHORT_SHA}"
+
+          if gh release view "$tag" --repo "$repository" --json isDraft >/tmp/test-release.json 2>/dev/null; then
+            [[ "$(jq -r .isDraft /tmp/test-release.json)" == "true" ]]
+            gh release view "$tag" --repo "$repository" --json assets --jq '.assets[].name' |
+              while IFS= read -r asset; do
+                [[ -z "$asset" ]] || gh release delete-asset "$tag" "$asset" \
+                  --repo "$repository" --yes
+              done
+          else
+            gh release create "$tag" \
+              --repo "$repository" \
+              --target "$SOURCE_SHA" \
+              --title "Test Build ${VERSION} (${SHORT_SHA})" \
+              --notes "Private test packages for ${SOURCE_SHA}." \
+              --draft \
+              --prerelease
+          fi
+
+          gh release upload "$tag" test-builds/* --repo "$repository" --clobber
