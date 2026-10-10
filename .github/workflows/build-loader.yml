@@ -6,6 +6,11 @@ on:
       source_sha:
         type: string
         required: true
+      create_deployment:
+        description: Create GitHub deployment events for release builds; set false for downloadable test builds
+        type: boolean
+        required: false
+        default: true
       version:
         type: string
         required: true
@@ -49,7 +54,9 @@ jobs:
             label: macos-aarch64
             bundles: app,dmg
     runs-on: ${{ matrix.runner }}
-    environment: release
+    environment:
+      name: release
+      deployment: ${{ inputs.create_deployment }}
     timeout-minutes: 75
     permissions:
       contents: read

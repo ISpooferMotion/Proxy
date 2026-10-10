@@ -223,6 +223,48 @@ async function assertReleaseContractPins() {
   ) {
     throw new Error("Runtime packaging does not select the architecture-specific MCP artifact");
   }
+
+  // Test builds are manually distributed Actions artifacts, never release deployments.
+  const testWorkflow = await readFile(
+    join(scripts, "..", ".github/workflows/test-builds.yml"),
+    "utf8",
+  );
+  if (
+    !testWorkflow.includes("workflow_dispatch:") ||
+    !testWorkflow.includes("Upload test build artifacts for download") ||
+    !testWorkflow.includes("retention-days: 30") ||
+    !testWorkflow.includes("test-builds/ISpooferMotion-*.zip") ||
+    !testWorkflow.includes("test-builds/*-setup.exe") ||
+    !testWorkflow.includes("test-builds/*.dmg") ||
+    testWorkflow.includes("BUILD_INFO.md") ||
+    /(?:discord(?:app)?\.com\/api|DISCORD_WEBHOOK|gh release |publish-runtime-updates\.mjs)/i.test(testWorkflow)
+  ) {
+    throw new Error("Test builds must only produce manually downloadable Actions artifacts");
+  }
+  const testCallCount = testWorkflow.match(/^      create_deployment: false$/gm)?.length ?? 0;
+  if (testCallCount !== 5) {
+    throw new Error("All five reusable test build calls must disable deployments");
+  }
+  const testStager = await readFile(join(scripts, "stage-test-builds.mjs"), "utf8");
+  if (/BUILD_INFO\.md|writeFile\([^)]*\.md/i.test(testStager)) {
+    throw new Error("Test staging must not generate Markdown build reports");
+  }
+  for (const file of [
+    "build-daemon.yml",
+    "build-ui.yml",
+    "build-mcp-server.yml",
+    "build-loader.yml",
+    "build-studio-payload.yml",
+  ]) {
+    const contents = await readFile(join(scripts, "..", ".github/workflows", file), "utf8");
+    if (
+      !contents.includes("      create_deployment:") ||
+      !contents.includes("        default: true") ||
+      !contents.includes("      deployment: ${{ inputs.create_deployment }}")
+    ) {
+      throw new Error(`${file} must preserve deployments for release builds and disable them for tests`);
+    }
+  }
 }
 
 function run(script, ...args) {
@@ -262,6 +304,29 @@ try {
   }
   for (const label of contract.platforms.map(({ label }) => label)) {
     await put(`${loaderPrefix}-${label}.sbom.cdx.json`, "{}\n");
+  }
+
+  const testStage = join(root, "test-builds");
+  run("stage-test-builds.mjs", artifacts, testStage);
+  const testFiles = await readdir(testStage);
+  const expectedTestFiles = [
+    ...contract.platforms.map(({ label }) => `ISpooferMotion-${label}.zip`),
+    ...loaderAssets.filter((name) => name.endsWith("-setup.exe") || name.endsWith(".dmg")),
+    "SHA256SUMS",
+  ].sort();
+  if (JSON.stringify(testFiles.sort()) !== JSON.stringify(expectedTestFiles)) {
+    throw new Error(`Test stage must contain only manual build artifacts and checksums: ${testFiles}`);
+  }
+  if (testFiles.some((name) => name.toLowerCase().endsWith(".md"))) {
+    throw new Error("Test stage unexpectedly contains a Markdown file");
+  }
+  for (const line of (await readFile(join(testStage, "SHA256SUMS"), "utf8")).trim().split("\n")) {
+    const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
+    if (!match || !testFiles.includes(match[2])) {
+      throw new Error(`Malformed test-stage checksum: ${line}`);
+    }
+    const digest = createHash("sha256").update(await readFile(join(testStage, match[2]))).digest("hex");
+    if (digest !== match[1]) throw new Error(`Test-stage checksum mismatch: ${match[2]}`);
   }
 
   run("stage-release-assets.mjs", artifacts, stage, version);

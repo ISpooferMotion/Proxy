@@ -6,6 +6,11 @@ on:
       source_sha:
         type: string
         required: true
+      create_deployment:
+        description: Create GitHub deployment events for release builds; set false for downloadable test builds
+        type: boolean
+        required: false
+        default: true
     secrets:
       PAT: { required: true }
       ISM_HWID_SALT: { required: false }
@@ -38,7 +43,9 @@ jobs:
             label: macos-aarch64
             binary: mcp-server
     runs-on: ${{ matrix.runner }}
-    environment: release
+    environment:
+      name: release
+      deployment: ${{ inputs.create_deployment }}
     timeout-minutes: 60
     permissions:
       contents: read

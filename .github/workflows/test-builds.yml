@@ -1,0 +1,167 @@
+name: ISpooferMotion Test Builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch name or commit SHA from ISpooferMotion-VeeThree
+        type: string
+        required: false
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ism-test-builds-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Prepare test build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
+          ref: ${{ inputs.source_ref || 'main' }}
+          path: source
+          token: ${{ secrets.PAT }}
+          persist-credentials: false
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+      - id: resolve
+        name: Resolve target commit and version
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          short="$(git rev-parse --short HEAD)"
+          version="$(bun scripts/sync-versions.ts --print-current 2>/dev/null || jq -r .version apps/ui/package.json)"
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Resolved target commit: $sha ($short)"
+          echo "Resolved version: $version"
+
+  daemon:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-daemon.yml@main
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      create_deployment: false
+    secrets: inherit
+
+  ui:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-ui.yml@main
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      create_deployment: false
+    secrets: inherit
+
+  studio-payload:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-studio-payload.yml@main
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      create_deployment: false
+    secrets: inherit
+
+  mcp-server:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-mcp-server.yml@main
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      create_deployment: false
+    secrets: inherit
+
+  loader:
+    needs: validate
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/build-loader.yml@main
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+      version: ${{ needs.validate.outputs.version }}
+      create_deployment: false
+    secrets: inherit
+
+  runtime:
+    needs: [validate, daemon, ui, mcp-server, studio-payload]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ISpooferMotion/Proxy/.github/workflows/package-runtime.yml@main
+    with:
+      source_sha: ${{ needs.validate.outputs.source_sha }}
+    secrets: inherit
+
+  package-test-artifacts:
+    name: Package test build artifacts
+    needs: [validate, loader, runtime]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout automation scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ISpooferMotion/Proxy
+          ref: main
+          path: automation
+          persist-credentials: false
+      - name: Download runtime artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: runtime-*
+          path: artifacts/runtime
+      - name: Download loader artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: loader-*
+          path: artifacts/loader
+      - name: Stage test builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-builds
+          node automation/scripts/stage-test-builds.mjs artifacts test-builds
+      - name: Upload test build artifacts for download
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ISpooferMotion-Test-Builds-${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.short_sha }}
+          path: |
+            test-builds/ISpooferMotion-*.zip
+            test-builds/*-setup.exe
+            test-builds/*.dmg
+            test-builds/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
