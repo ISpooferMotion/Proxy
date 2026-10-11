@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import contract from "../release-contract.json" with { type: "json" };
+import { readZipEntry, writeZip, zipEntries } from "./test-build-zip.mjs";
 
 const scripts = dirname(fileURLToPath(import.meta.url));
 const root = await mkdtemp(join(tmpdir(), "ism-release-tools-"));
@@ -328,12 +329,7 @@ try {
       : ["daemon", "ui", "mcp-server", "libISpooferMotion.dylib"];
     const runtimePath = join(artifacts, asset.slice(0, 3), asset);
     await mkdir(dirname(runtimePath), { recursive: true });
-    execFileSync("python3", ["-c", `
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:
-    for component in sys.argv[2:]:
-        archive.writestr(component, (component + ':fixture').encode('utf8'))
-`, runtimePath, ...components]);
+    await writeZip(runtimePath, components.map(name => ({ name, text: `${name}:fixture` })));
     const digest = createHash("sha256").update(await readFile(runtimePath)).digest("hex");
     await put(`${asset}.sha256`, `${digest}  ${asset}\n`);
     await put(`ISpooferMotion-${label}.sbom.cdx.json`, "{}\n");
@@ -358,6 +354,11 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:
 
   const testStage = join(root, "test-builds");
   run("stage-test-builds.mjs", artifacts, testStage, version);
+  // Install the staged macOS components into isolated test HOME directories.
+  // The installers themselves are bash and run with a mocked Darwin uname.
+  if (process.platform === "linux") {
+    run("test-macos-installer.mjs", testStage, version);
+  }
   const testFiles = await readdir(testStage);
   const expectedTestFiles = [
     ...contract.platforms.map(({ label }) => `ISpooferMotion-${version}-${label}-test.zip`),
@@ -372,31 +373,58 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as archive:
   // Verify the exact portable layout, integrity hashes, and paired version markers.
   for (const { label } of contract.platforms) {
     const output = join(testStage, `ISpooferMotion-${version}-${label}-test.zip`);
-    const layout = JSON.parse(execFileSync("python3", ["-c", `
-import hashlib, json, sys, zipfile
-with zipfile.ZipFile(sys.argv[1]) as archive:
-    names = archive.namelist()
-    manifest = json.loads(archive.read('bin/.ispoofermotion-install-integrity.json'))
-    print(json.dumps({'names': names, 'manifest': manifest,
-       'digest_ok': all(hashlib.sha256(archive.read('bin/' + name)).hexdigest() == h
-                       for name, h in manifest['components'].items()),
-       'daemon_version': archive.read('bin/.ispoofermotion-daemon-version').decode().strip(),
-       'ui_version': archive.read('bin/.ispoofermotion-ui-version').decode().strip()}))
-`, output], { encoding: "utf8" }));
-    if (layout.manifest.version !== version || !layout.digest_ok ||
-        layout.daemon_version !== version || layout.ui_version !== version) {
+    const entries = await zipEntries(output);
+    const names = new Set(entries.keys());
+    const manifest = JSON.parse(await readZipEntry(output, 'bin/.ispoofermotion-install-integrity.json'));
+    if (manifest.version !== version ||
+        (await readZipEntry(output, 'bin/.ispoofermotion-daemon-version')).toString().trim() !== version ||
+        (await readZipEntry(output, 'bin/.ispoofermotion-ui-version')).toString().trim() !== version) {
       throw new Error(`Invalid offline integrity contract: ${label}`);
     }
-    const names = new Set(layout.names);
+    for (const [name, expectedHash] of Object.entries(manifest.components)) {
+      const digest = createHash('sha256').update(await readZipEntry(output, `bin/${name}`)).digest('hex');
+      if (digest !== expectedHash) throw new Error(`Runtime hash mismatch: ${label}/${name}`);
+    }
     const loaderName = label === "windows-x86_64"
       ? "ISpooferMotion.exe"
       : `${loaderPrefix}-${label}.dmg`;
     if (!names.has(loaderName) || !names.has("bin/.ispoofermotion-install-integrity.json") ||
-        names.size !== (label === "windows-x86_64" ? 8 : 9)) {
+        names.size !== (label === "windows-x86_64" ? 8 : 11)) {
       throw new Error(`Invalid portable test archive layout: ${label}`);
     }
-    if (label !== "windows-x86_64" && !names.has("INSTALL-MACOS.txt")) {
-      throw new Error(`macOS test bundle is missing offline installation instructions: ${label}`);
+    if (label !== "windows-x86_64") {
+      if (!names.has("INSTALL-MACOS.txt") || !names.has("INSTALL-MACOS.command") ||
+          !names.has("bin/SHA256SUMS")) {
+        throw new Error(`macOS test bundle is missing its verified installer: ${label}`);
+      }
+      const command = (await readZipEntry(output, 'INSTALL-MACOS.command')).toString('utf8');
+      if (!(entries.get('INSTALL-MACOS.command').unixMode & 0o111)) {
+        throw new Error(`macOS install command is not executable: ${label}`);
+      }
+      const checksums = (await readZipEntry(output, 'bin/SHA256SUMS')).toString('utf8').trim().split('\n');
+      const expected = new Set([
+        'bin/daemon', 'bin/ui', 'bin/mcp-server', 'bin/libISpooferMotion.dylib',
+        'bin/.ispoofermotion-daemon-version', 'bin/.ispoofermotion-ui-version',
+        'bin/.ispoofermotion-install-integrity.json',
+      ]);
+      const actual = new Map(checksums.map(line => {
+        const match = /^([a-f0-9]{64})  (.+)$/.exec(line);
+        if (!match) throw new Error(`Bad macOS checksum line: ${line}`);
+        return [match[2], match[1]];
+      }));
+      if (actual.size !== expected.size || [...expected].some(name => !actual.has(name))) {
+        throw new Error(`Invalid macOS checksum layout: ${label}`);
+      }
+      for (const name of expected) {
+        const hash = createHash('sha256').update(await readZipEntry(output, name)).digest('hex');
+        if (hash !== actual.get(name)) throw new Error(`Invalid macOS checksum: ${name}`);
+      }
+      if (!command.includes('shasum -a 256 -c') ||
+          !command.includes(label === 'macos-aarch64' ? 'arm64' : 'x86_64')) {
+        throw new Error(`Invalid Mac installer script: ${label}`);
+      }
+      const installerSyntax = execFileSync("bash", ["-n"], { input: command, encoding: "utf8" });
+      if (installerSyntax) throw new Error(`Unexpected installer syntax output: ${label}`);
     }
   }
 
@@ -425,11 +453,18 @@ with zipfile.ZipFile(sys.argv[1]) as archive:
     if (!rejected) throw new Error("Test packages accepted a tampered runtime checksum");
 
     await writeFile(checksumPath, originalChecksum);
-    execFileSync("python3", ["-c", `
-import sys, zipfile
-with zipfile.ZipFile(sys.argv[1], 'w') as archive:
-    archive.writestr('../escaped-file.exe', b'untrusted')
-`, samplePath]);
+    // Mutate an existing filename in both ZIP headers without changing their lengths.
+    // Its runtime content checksum is valid, but the archive member path is unsafe.
+    const invalidArchive = Buffer.from(originalRuntime);
+    const from = Buffer.from('daemon.exe');
+    const to = Buffer.from('../bad.exe');
+    let hits = 0;
+    for (let offset = 0; (offset = invalidArchive.indexOf(from, offset)) !== -1; offset += from.length) {
+      to.copy(invalidArchive, offset);
+      hits += 1;
+    }
+    if (hits !== 2) throw new Error(`Could not safely construct traversal fixture: ${hits}`);
+    await writeFile(samplePath, invalidArchive);
     const maliciousDigest = createHash("sha256").update(await readFile(samplePath)).digest("hex");
     await writeFile(checksumPath, `${maliciousDigest}  ${sampleName}\n`);
     rejected = false;
