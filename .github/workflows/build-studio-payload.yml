@@ -105,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --locked --release -p ism-dll --features payload
-          cp target/release/ism_dll.dll target/release/ISpooferMotion.dll
+          test -f target/release/ISpooferMotion.dll
       - name: Sign and verify Studio payload
         if: env.WINDOWS_SIGNING_ENABLED == 'true'
         shell: pwsh
@@ -208,8 +208,8 @@ jobs:
           cargo build --locked --release -p ism-dll --features payload --target aarch64-apple-darwin
           mkdir -p component
           lipo -create \
-            target/x86_64-apple-darwin/release/libism_dll.dylib \
-            target/aarch64-apple-darwin/release/libism_dll.dylib \
+            target/x86_64-apple-darwin/release/libISpooferMotion.dylib \
+            target/aarch64-apple-darwin/release/libISpooferMotion.dylib \
             -output component/libISpooferMotion.dylib
           architectures="$(lipo -archs component/libISpooferMotion.dylib)"
           [[ " $architectures " == *" x86_64 "* ]]
