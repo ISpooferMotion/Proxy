@@ -1,10 +1,8 @@
-name: ISpooferMotion CI
-
+name: Desktop source CI
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Full commit SHA from ISpooferMotion-VeeThree
         type: string
         required: true
   workflow_call:
@@ -14,70 +12,24 @@ on:
         required: true
     secrets:
       PAT: { required: true }
-
 permissions:
   contents: read
-
-concurrency:
-  group: ism-ci-${{ github.repository }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  rust-platforms:
-    name: Rust (${{ matrix.os }})
+  desktop:
+    name: Validate desktop (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-15, ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - name: Checkout automation scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ISpooferMotion/Proxy
-          path: automation
-          persist-credentials: false
-      - name: Checkout source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ISpooferMotion/ISpooferMotion-VeeThree
-          ref: ${{ inputs.source_sha }}
-          path: source
-          token: ${{ secrets.PAT }}
-          persist-credentials: false
-      - uses: ./automation/.github/actions/setup-build
-        with:
-          cache-key: ci-platform-${{ matrix.os }}
-          components: clippy,rustfmt
-          desktop: "true"
-      - name: Check Rust formatting
-        if: runner.os == 'Linux'
-        working-directory: source
-        run: cargo fmt --all -- --check
-      - name: Cargo check
-        working-directory: source
-        run: cargo check --locked -p daemon -p ui --all-targets --all-features
-      - name: Cargo test
-        working-directory: source
-        run: cargo test --locked -p daemon -p ui -p ism-auth -p ism-config -p ism-security -p ism-updater --all-features --no-fail-fast
-      - name: Cargo clippy
-        working-directory: source
-        run: cargo clippy --locked -p daemon -p ui -p ism-auth -p ism-config -p ism-security -p ism-updater --all-targets --all-features -- -D warnings
-
-  windows-workspace:
-    name: Full Windows workspace
-    runs-on: windows-latest
+        runner: [windows-latest, macos-15]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
-      - name: Checkout automation scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
           path: automation
           persist-credentials: false
-      - name: Checkout source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
@@ -86,99 +38,26 @@ jobs:
           persist-credentials: false
       - uses: ./automation/.github/actions/setup-build
         with:
-          cache-key: ci-windows-workspace
-          components: clippy
-          desktop: "false"
-      - name: Cargo check workspace
+          bun: "true"
+          components: rustfmt,clippy
+          cache-key: desktop-ci-${{ matrix.runner }}
+          workspaces: source/src-tauri
+      - name: Verify source layout
+        shell: bash
+        run: node automation/scripts/verify-desktop-source.mjs source
+      - name: Install frontend dependencies
         working-directory: source
-        run: cargo check --locked --workspace --all-targets --all-features
-      - name: Cargo test workspace
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: TypeScript and ESLint
         working-directory: source
-        run: cargo test --locked --workspace --all-features --no-fail-fast
-      - name: Cargo clippy workspace
-        working-directory: source
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-
-  obfuscator:
-    name: Obfuscator quality
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - name: Checkout automation scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ISpooferMotion/Proxy
-          path: automation
-          persist-credentials: false
-      - name: Checkout source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ISpooferMotion/ISpooferMotion-VeeThree
-          ref: ${{ inputs.source_sha }}
-          path: source
-          token: ${{ secrets.PAT }}
-          persist-credentials: false
-      - uses: ./automation/.github/actions/setup-build
-        with:
-          cache-key: ci-obfuscator
-          components: clippy
-          desktop: "false"
-      - name: Cargo test obfuscator
-        working-directory: source
-        run: cargo test --locked -p obfuscator --all-targets --no-fail-fast
-      - name: Cargo clippy obfuscator
-        working-directory: source
-        run: cargo clippy --locked -p obfuscator --all-targets --all-features -- -D warnings
-
-  typescript:
-    name: UI and release contracts
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - name: Checkout automation scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ISpooferMotion/Proxy
-          path: automation
-          persist-credentials: false
-      - name: Checkout source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: ISpooferMotion/ISpooferMotion-VeeThree
-          ref: ${{ inputs.source_sha }}
-          path: source
-          token: ${{ secrets.PAT }}
-          persist-credentials: false
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.2
-      - name: Install locked dependencies
         shell: bash
         run: |
           set -euo pipefail
-          node automation/scripts/verify-core-package.mjs source/apps/ui
-          cd source
-          bun install --frozen-lockfile --ignore-scripts
-          cd apps/ui
-          bun install --frozen-lockfile --ignore-scripts
-      - name: Check code formatting
+          bun x tsc --noEmit
+          bun x eslint .
+      - name: Lint Rust
+        working-directory: source/src-tauri
+        run: cargo clippy --locked -- -D warnings
+      - name: Build frontend
         working-directory: source
-        run: bun run format
-      - name: Lint source
-        working-directory: source
-        run: bun run lint
-      - name: Typecheck source
-        working-directory: source
-        run: bun run typecheck
-      - name: Test release tools
-        run: node automation/scripts/test-release-tools.mjs
-      - name: Run script tests
-        working-directory: source
-        run: bun test scripts/tests
-      - name: Lint UI
-        working-directory: source/apps/ui
-        run: bun run lint
-      - name: Build UI
-        working-directory: source/apps/ui
         run: bun run build

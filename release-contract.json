@@ -1,26 +1,24 @@
 {
   "sourceRepository": "ISpooferMotion/ISpooferMotion-VeeThree",
-  "coreRepository": "ISpooferMotion/Core",
-  "coreRef": "7a765a6f9d4754bf1dfc1640de6f9566b098d441",
-  "coreVersion": "4.3.0",
-  "corePackageUrl": "https://github.com/ISpooferMotion/Core/releases/download/v4.3.0/package.tgz",
-  "corePackageSha256": "f3c28495ba663c2d732d107c2caecb8b0329b5eb5fdf5d4b043070c1707cb72a",
   "releasePublicKeyHex": "7cca204c5e75d413d66e43aa4802f2ace3fc17c02671033ea6372f88a0df29f2",
   "platforms": [
     {
       "label": "windows-x86_64",
       "os": "windows",
-      "arch": "x86_64"
+      "arch": "x86_64",
+      "extension": "-setup.exe"
     },
     {
       "label": "macos-x86_64",
       "os": "macos",
-      "arch": "x86_64"
+      "arch": "x86_64",
+      "extension": ".dmg"
     },
     {
       "label": "macos-aarch64",
       "os": "macos",
-      "arch": "aarch64"
+      "arch": "aarch64",
+      "extension": ".dmg"
     }
   ]
 }

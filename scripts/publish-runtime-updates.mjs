@@ -1,163 +1,87 @@
-import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  sign,
-} from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import contract from "../release-contract.json" with { type: "json" };
+import {
+  installerName,
+  platforms,
+  releaseSigner,
+  sha256File,
+  signedRelease,
+  sourceRepository,
+  validateOrigin,
+} from "./desktop-release.mjs";
 
-const MAX_ARCHIVE_BYTES = 500 * 1024 * 1024;
-const MAX_API_RESPONSE_BYTES = 64 * 1024;
-const ED25519_SPKI_PREFIX_HEX = "302a300506032b6570032100";
-
-function validateApiBase(value) {
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    throw new Error("Release API base must be a valid URL");
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (
-    parsed.protocol !== "https:" ||
-    (host !== "ispoofermotion.com" && !host.endsWith(".ispoofermotion.com")) ||
-    (parsed.port && parsed.port !== "443") ||
-    (parsed.pathname && parsed.pathname !== "/") ||
-    parsed.search ||
-    parsed.hash ||
-    parsed.username ||
-    parsed.password
-  ) {
-    throw new Error("Release API base must be an ispoofermotion.com HTTPS origin");
-  }
-  return parsed.origin;
-}
-
-async function hashArchive(path) {
-  const metadata = await lstat(path);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error(`Release archive must be a regular file: ${path}`);
-  }
-  if (metadata.size <= 0 || metadata.size > MAX_ARCHIVE_BYTES) {
-    throw new Error(`Release archive is empty or exceeds the size limit: ${path}`);
-  }
-  const digest = createHash("sha256");
-  let total = 0;
-  for await (const chunk of createReadStream(path)) {
-    total += chunk.length;
-    if (total > MAX_ARCHIVE_BYTES) {
-      throw new Error(`Release archive exceeded the size limit while reading: ${path}`);
-    }
-    digest.update(chunk);
-  }
-  if (total !== metadata.size) {
-    throw new Error(`Release archive changed while it was being hashed: ${path}`);
-  }
-  return digest.digest("hex");
-}
-
-async function readResponseJsonBounded(response) {
-  if (!response.body) return null;
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_API_RESPONSE_BYTES) {
-        await reader.cancel("response exceeds the size limit");
-        throw new Error("Update metadata API response exceeded the size limit");
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const text = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString(
-    "utf8",
+const [stage, repository = sourceRepository, tag, version, apiBaseArg] =
+  process.argv.slice(2);
+if (!stage || !repository || !tag || !version) {
+  throw new Error(
+    "Usage: publish-runtime-updates.mjs <stage> <repository> <tag> <version> [api-origin]",
   );
-  try {
-    return { text, json: text ? JSON.parse(text) : null };
-  } catch {
-    return { text, json: null };
-  }
 }
-
-const [stage, repository, tag, version, apiBaseArg] = process.argv.slice(2);
-const apiBaseValue = apiBaseArg || process.env.RELEASE_API_BASE || "";
-const privateKeyValue = process.env.UPDATER_PRIVATE_KEY?.replace(/\\n/g, "\n");
+if (repository !== sourceRepository)
+  throw new Error("Release repository is not trusted");
+if (tag !== `v${version}`) throw new Error("Version and release tag disagree");
+const apiBase = validateOrigin(
+  apiBaseArg || process.env.RELEASE_API_BASE || "https://ispoofermotion.com",
+);
+const privateKey = process.env.UPDATER_PRIVATE_KEY;
 const apiToken = process.env.RELEASE_API_TOKEN;
-if (!stage || !repository || !tag || !version || !apiBaseValue) {
-  throw new Error(
-    "Usage: publish-runtime-updates.mjs <stage> <repository> <tag> <version> <api-base>",
-  );
-}
-if (!privateKeyValue || !apiToken) {
+if (!privateKey || !apiToken)
   throw new Error("UPDATER_PRIVATE_KEY and RELEASE_API_TOKEN are required");
-}
-
-const privateKey = createPrivateKey(privateKeyValue);
-const publicKeyHex = Buffer.from(
-  createPublicKey(privateKey).export({ format: "der", type: "spki" }),
-).toString("hex");
-if (
-  publicKeyHex !== `${ED25519_SPKI_PREFIX_HEX}${contract.releasePublicKeyHex}`
-) {
-  throw new Error(
-    "UPDATER_PRIVATE_KEY does not match the public key embedded in released clients",
-  );
-}
-const apiBase = validateApiBase(apiBaseValue);
+const signer = releaseSigner(privateKey);
 const releases = [];
-for (const platform of contract.platforms) {
-  const asset = `ISpooferMotion-${platform.label}.zip`;
-  const hash = await hashArchive(join(stage, asset));
-  const url = `${apiBase}/api/v3/proxy/update/download?os=${platform.os}&arch=${platform.arch}&version=${encodeURIComponent(tag)}`;
-  const sourceUrl = `https://github.com/${repository}/releases/download/${tag}/${asset}`;
+for (const platform of platforms) {
+  const name = installerName(version, platform);
+  const hash = await sha256File(join(stage, name));
   const signedData = {
     os: platform.os,
     arch: platform.arch,
     version: tag,
-    url,
-    sourceUrl,
+    url: `${apiBase}/api/v3/proxy/update/download?os=${platform.os}&arch=${platform.arch}&version=${encodeURIComponent(tag)}`,
+    sourceUrl: `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`,
     hash,
   };
-  const payload = `ISM3\0update-manifest\0${JSON.stringify(signedData)}`;
-  const signature = sign(null, Buffer.from(payload), privateKey).toString(
-    "base64",
-  );
-  releases.push({
-    os: signedData.os,
-    arch: signedData.arch,
-    version: signedData.version,
-    url: signedData.url,
-    source_url: signedData.sourceUrl,
-    hash: signedData.hash,
-    signature,
-  });
+  releases.push(signedRelease(signedData, signer));
 }
 
 const response = await fetch(`${apiBase}/api/v3/updates/latest`, {
   method: "POST",
   headers: {
-    authorization: `Bearer ${apiToken}`,
-    "content-type": "application/json",
+    Authorization: `Bearer ${apiToken}`,
+    "Content-Type": "application/json",
   },
   body: JSON.stringify({ releases }),
   signal: AbortSignal.timeout(30_000),
 });
-const result = await readResponseJsonBounded(response);
+if (!response.body)
+  throw new Error("Metadata publication returned no response");
+const reader = response.body.getReader();
+const chunks = [];
+let resultBytes = 0;
+for (;;) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  resultBytes += value.byteLength;
+  if (resultBytes > 65_536) {
+    await reader.cancel();
+    throw new Error("Metadata publication response exceeded the size limit");
+  }
+  chunks.push(value);
+}
+const result = Buffer.concat(
+  chunks.map((chunk) => Buffer.from(chunk)),
+).toString("utf8");
 if (!response.ok) {
-  const message = result?.text.slice(0, 500) ?? "";
   throw new Error(
-    `Update metadata publication failed (${response.status}): ${message}`,
+    `Metadata publication failed: HTTP ${response.status}: ${result.slice(0, 500)}`,
   );
 }
-if (result?.json?.success !== true || result?.json?.count !== releases.length) {
-  throw new Error("Update metadata API returned an invalid success response");
+let parsed;
+try {
+  parsed = JSON.parse(result);
+} catch {
+  throw new Error("Invalid publication confirmation");
 }
+if (parsed.success !== true || parsed.count !== releases.length)
+  throw new Error("Metadata publication was not confirmed");
+console.log(
+  `Published ${releases.length} signed desktop release manifests for ${tag}`,
+);

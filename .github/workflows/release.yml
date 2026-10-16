@@ -1,27 +1,24 @@
-name: ISpooferMotion Release
-
+name: ISpooferMotion Desktop Release
 on:
   workflow_dispatch:
     inputs:
       source_sha:
-        description: Full commit SHA from ISpooferMotion-VeeThree
+        description: The 40-character commit SHA containing the Tauri desktop app
         type: string
         required: true
       release_tag:
-        description: Release tag in v3.YYMM.D format
+        description: CalVer release tag, e.g. v3.2610.16
         type: string
         required: true
   workflow_call:
     inputs:
-      source_sha:
-        type: string
-        required: true
-      release_tag:
-        type: string
-        required: true
+      source_sha: { type: string, required: true }
+      release_tag: { type: string, required: true }
     secrets:
       PAT: { required: true }
-      ISM_HWID_SALT: { required: false }
+      UPDATER_PRIVATE_KEY: { required: true }
+      RELEASE_API_TOKEN: { required: true }
+      RELEASE_API_BASE: { required: false }
       WINDOWS_CERTIFICATE_BASE64: { required: false }
       WINDOWS_CERTIFICATE_PASSWORD: { required: false }
       APPLE_CERTIFICATE: { required: false }
@@ -30,265 +27,105 @@ on:
       APPLE_ID: { required: false }
       APPLE_PASSWORD: { required: false }
       APPLE_TEAM_ID: { required: false }
-      TAURI_PRIVATE_KEY: { required: false }
-      TAURI_PRIVATE_KEY_PASSWORD: { required: false }
-      TAURI_PUBLIC_KEY: { required: false }
-      UPDATER_PRIVATE_KEY: { required: false }
-      RELEASE_API_TOKEN: { required: false }
-      RELEASE_API_BASE: { required: false }
-
 permissions:
   contents: read
-
 concurrency:
-  group: ism-release-${{ github.repository }}
+  group: desktop-release-${{ inputs.release_tag }}
   cancel-in-progress: false
-
 jobs:
   validate:
-    name: Validate release
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    runs-on: windows-latest
     outputs:
-      version: ${{ steps.release.outputs.version }}
+      version: ${{ steps.version.outputs.value }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/ISpooferMotion-VeeThree
           ref: ${{ inputs.source_sha }}
           path: source
-          fetch-depth: 1
-          fetch-tags: true
           token: ${{ secrets.PAT }}
+          fetch-tags: true
           persist-credentials: false
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.2
-      - name: Install dependencies
-        working-directory: source
-        run: bun install --frozen-lockfile --ignore-scripts
-      - id: release
-        name: Validate release inputs
+      - id: version
         shell: bash
-        working-directory: source
         env:
-          RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_SHA: ${{ inputs.source_sha }}
-          GH_TOKEN: ${{ secrets.PAT }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$RELEASE_TAG" =~ ^v3\.[0-9]{4}\.([1-9]|[12][0-9]|3[01])$ ]] || {
-            echo "Release tag must use v3.YYMM.D CalVer" >&2
-            exit 1
-          }
-          version="${RELEASE_TAG#v}"
-          if tag_sha="$(git rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}" 2>/dev/null)"; then
-            [[ "$tag_sha" == "$SOURCE_SHA" ]] || {
-              echo "Release tag $RELEASE_TAG points to $tag_sha, not $SOURCE_SHA" >&2
-              exit 1
-            }
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          version="$(node automation/scripts/verify-desktop-source.mjs source "$RELEASE_TAG" | sed -n 's/.*validated: //p')"
+          test -n "$version"
+          git -C source fetch --tags --force
+          if git -C source rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}" >/dev/null 2>&1; then
+            test "$(git -C source rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$SOURCE_SHA"
           fi
-          project_version="$(bun scripts/sync-versions.ts --print-current)"
-          [[ "$version" == "$project_version" ]] || {
-            echo "Release tag $RELEASE_TAG does not match project version $project_version" >&2
-            exit 1
-          }
-          bun scripts/sync-versions.ts --version "$project_version" --check
-          if release_json="$(gh release view "$RELEASE_TAG" --repo "ISpooferMotion/ISpooferMotion-VeeThree" --json isDraft 2>/dev/null)"; then
-            [[ "$(jq -r .isDraft <<< "$release_json")" == "true" ]] || {
-              echo "Release $RELEASE_TAG is already published" >&2
-              exit 1
-            }
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-  daemon:
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+  build:
     needs: validate
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    uses: ISpooferMotion/Proxy/.github/workflows/build-daemon.yml@main
-    with:
-      source_sha: ${{ inputs.source_sha }}
-    secrets: inherit
-
-  ui:
-    needs: validate
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    uses: ISpooferMotion/Proxy/.github/workflows/build-ui.yml@main
-    with:
-      source_sha: ${{ inputs.source_sha }}
-    secrets: inherit
-
-  studio-payload:
-    needs: validate
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    uses: ISpooferMotion/Proxy/.github/workflows/build-studio-payload.yml@main
-    with:
-      source_sha: ${{ inputs.source_sha }}
-    secrets: inherit
-
-  mcp-server:
-    needs: validate
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    uses: ISpooferMotion/Proxy/.github/workflows/build-mcp-server.yml@main
-    with:
-      source_sha: ${{ inputs.source_sha }}
-    secrets: inherit
-
-  loader:
-    needs: validate
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    uses: ISpooferMotion/Proxy/.github/workflows/build-loader.yml@main
+    uses: ISpooferMotion/Proxy/.github/workflows/build.yml@main
     with:
       source_sha: ${{ inputs.source_sha }}
       version: ${{ needs.validate.outputs.version }}
     secrets: inherit
-
-  runtime:
-    needs: [validate, daemon, ui, mcp-server, studio-payload]
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    uses: ISpooferMotion/Proxy/.github/workflows/package-runtime.yml@main
-    with:
-      source_sha: ${{ inputs.source_sha }}
-    secrets: inherit
-
   publish:
-    name: Publish release
-    needs: [validate, loader, runtime]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    needs: [validate, build]
+    runs-on: windows-latest
     environment: release
-    permissions:
-      contents: read
+    timeout-minutes: 30
     steps:
-      - name: Checkout automation scripts
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
-          ref: main
           path: automation
           persist-credentials: false
-      - name: Checkout source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          repository: ISpooferMotion/ISpooferMotion-VeeThree
-          ref: ${{ inputs.source_sha }}
-          path: source
-          token: ${{ secrets.PAT }}
-          persist-credentials: false
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.2
-      - name: Install source dependencies
-        working-directory: source
-        run: bun install --frozen-lockfile --ignore-scripts
-      - name: Download runtime artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: runtime-*
-          path: artifacts
-      - name: Download loader artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: loader-*
-          path: artifacts
-      - name: Stage and verify artifacts
+          pattern: desktop-*
+          path: installer-stage
+          merge-multiple: true
+      - name: Validate expected artifacts and generate checksums
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          TAURI_PUBLIC_KEY: ${{ secrets.TAURI_PUBLIC_KEY }}
         run: |
           set -euo pipefail
-          node automation/scripts/stage-release-assets.mjs artifacts release-stage "$VERSION"
-          node automation/scripts/generate-loader-manifest.mjs release-stage "ISpooferMotion/ISpooferMotion-VeeThree" "$RELEASE_TAG" "$VERSION"
-          for archive in release-stage/ISpooferMotion-*.zip; do
-            case "$archive" in
-              *windows-x86_64*) platform=Windows ;;
-              *macos-*) platform=macOS ;;
-              *) echo "Unknown runtime archive: $archive" >&2; exit 1 ;;
-            esac
-            bun source/scripts/release/validate-release-archive.ts "$archive" --platform "$platform"
-          done
-          for signature in release-stage/*.sig; do
-            node automation/scripts/verify-tauri-signature.mjs "${signature%.sig}" "$signature"
-          done
-          (cd release-stage && sha256sum --check SHA256SUMS)
-      - name: Create or update draft release
+          node automation/scripts/verify-staged-installers.mjs installer-stage "$VERSION"
+          (cd installer-stage && sha256sum ISpooferMotion-* > SHA256SUMS)
+      - name: Publish GitHub release assets
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.PAT }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
           SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
-          RELEASE_REPO="ISpooferMotion/ISpooferMotion-VeeThree"
-          if gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" --json isDraft >/tmp/release.json 2>/dev/null; then
-            [[ "$(jq -r .isDraft /tmp/release.json)" == "true" ]]
-            gh release view "$RELEASE_TAG" --repo "$RELEASE_REPO" --json assets --jq '.assets[].name' |
-              while IFS= read -r asset; do
-                [[ -z "$asset" ]] || gh release delete-asset "$RELEASE_TAG" "$asset" --repo "$RELEASE_REPO" --yes
-              done
+          repo=ISpooferMotion/ISpooferMotion-VeeThree
+          if gh release view "$RELEASE_TAG" --repo "$repo" --json isDraft >/tmp/release.json 2>/dev/null; then
+            test "$(jq -r '.isDraft' /tmp/release.json)" = true
           else
-            gh release create "$RELEASE_TAG" \
-              --repo "$RELEASE_REPO" \
-              --target "$SOURCE_SHA" \
-              --title "ISpooferMotion $RELEASE_TAG" \
-              --generate-notes \
-              --draft
+            gh release create "$RELEASE_TAG" --repo "$repo" --target "$SOURCE_SHA" --title "ISpooferMotion $RELEASE_TAG" --generate-notes --draft
           fi
-          gh release upload "$RELEASE_TAG" release-stage/* --repo "$RELEASE_REPO" --clobber
-      - name: Verify release assets
-        shell: bash
+          gh release upload "$RELEASE_TAG" installer-stage/* --repo "$repo" --clobber
+      - name: Publish release and verified update manifests
         env:
           GH_TOKEN: ${{ secrets.PAT }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          set -euo pipefail
-          RELEASE_REPO="ISpooferMotion/ISpooferMotion-VeeThree"
-          mkdir roundtrip
-          gh release download "$RELEASE_TAG" --repo "$RELEASE_REPO" --dir roundtrip
-          diff \
-            <(find release-stage -maxdepth 1 -type f -printf '%f\n' | sort) \
-            <(find roundtrip -maxdepth 1 -type f -printf '%f\n' | sort)
-          (cd roundtrip && sha256sum --check SHA256SUMS)
-          cmp release-stage/latest.json roundtrip/latest.json
-      - name: Publish release and updater metadata
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.PAT }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
-          VERSION: ${{ needs.validate.outputs.version }}
           UPDATER_PRIVATE_KEY: ${{ secrets.UPDATER_PRIVATE_KEY }}
           RELEASE_API_TOKEN: ${{ secrets.RELEASE_API_TOKEN }}
           RELEASE_API_BASE: ${{ secrets.RELEASE_API_BASE }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
         run: |
           set -euo pipefail
-          RELEASE_REPO="ISpooferMotion/ISpooferMotion-VeeThree"
-          gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPO" --draft=false --latest
-          if ! node automation/scripts/publish-runtime-updates.mjs \
-            release-stage "$RELEASE_REPO" "$RELEASE_TAG" "$VERSION" "$RELEASE_API_BASE"; then
-            echo "Updater metadata publication failed; returning the GitHub release to draft." >&2
-            gh release edit "$RELEASE_TAG" --repo "$RELEASE_REPO" --draft=true
+          repo=ISpooferMotion/ISpooferMotion-VeeThree
+          gh release edit "$RELEASE_TAG" --repo "$repo" --draft=false --latest
+          if ! node automation/scripts/publish-runtime-updates.mjs installer-stage "$repo" "$RELEASE_TAG" "$VERSION"; then
+            gh release edit "$RELEASE_TAG" --repo "$repo" --draft=true
             exit 1
           fi
