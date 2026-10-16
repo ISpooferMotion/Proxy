@@ -73,8 +73,15 @@ jobs:
       source_sha: ${{ inputs.source_sha }}
       version: ${{ needs.validate.outputs.version }}
     secrets: inherit
+  tools:
+    needs: validate
+    uses: ISpooferMotion/Proxy/.github/workflows/build-tools.yml@main
+    with:
+      source_sha: ${{ inputs.source_sha }}
+      version: ${{ needs.validate.outputs.version }}
+    secrets: inherit
   publish:
-    needs: [validate, build]
+    needs: [validate, build, tools]
     runs-on: windows-latest
     environment: release
     timeout-minutes: 30
@@ -89,6 +96,11 @@ jobs:
           pattern: desktop-*
           path: installer-stage
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: tool-*
+          path: tool-stage
+          merge-multiple: true
       - name: Validate expected artifacts and generate checksums
         shell: bash
         env:
@@ -96,7 +108,9 @@ jobs:
         run: |
           set -euo pipefail
           node automation/scripts/verify-staged-installers.mjs installer-stage "$VERSION"
+          test "$(find tool-stage -maxdepth 1 -type f | wc -l | tr -d ' ')" = 6
           (cd installer-stage && sha256sum ISpooferMotion-* > SHA256SUMS)
+          (cd tool-stage && sha256sum ISpooferMotion-* > SHA256SUMS-tools)
       - name: Publish GitHub release assets
         shell: bash
         env:
@@ -111,7 +125,7 @@ jobs:
           else
             gh release create "$RELEASE_TAG" --repo "$repo" --target "$SOURCE_SHA" --title "ISpooferMotion $RELEASE_TAG" --generate-notes --draft
           fi
-          gh release upload "$RELEASE_TAG" installer-stage/* --repo "$repo" --clobber
+          gh release upload "$RELEASE_TAG" installer-stage/* tool-stage/* --repo "$repo" --clobber
       - name: Publish release and verified update manifests
         env:
           GH_TOKEN: ${{ secrets.PAT }}

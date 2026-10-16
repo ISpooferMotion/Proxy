@@ -1,0 +1,113 @@
+name: Build standalone tools
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+    secrets:
+      PAT: { required: true }
+      WINDOWS_CERTIFICATE_BASE64: { required: false }
+      WINDOWS_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_CERTIFICATE: { required: false }
+      APPLE_CERTIFICATE_PASSWORD: { required: false }
+      APPLE_SIGNING_IDENTITY: { required: false }
+permissions:
+  contents: read
+jobs:
+  build:
+    name: ${{ matrix.tool.display }} (${{ matrix.platform.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        tool:
+          - id: mcp-server
+            binary: ispoofermotion-mcp
+            display: MCP
+          - id: obfuscator
+            binary: ispoofermotion-obfuscator
+            display: Obfuscator
+        platform:
+          - runner: windows-latest
+            label: windows-x86_64
+            target: x86_64-pc-windows-msvc
+            extension: .exe
+          - runner: macos-15-intel
+            label: macos-x86_64
+            target: x86_64-apple-darwin
+            extension: ""
+          - runner: macos-15
+            label: macos-aarch64
+            target: aarch64-apple-darwin
+            extension: ""
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
+          ref: ${{ inputs.source_sha }}
+          path: source
+          token: ${{ secrets.PAT }}
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          cache-key: ${{ matrix.tool.id }}-${{ matrix.platform.label }}
+          workspaces: source/apps/${{ matrix.tool.id }}
+      - name: Validate source
+        shell: bash
+        run: node automation/scripts/verify-desktop-source.mjs source "v${{ inputs.version }}"
+      - name: Build release binary
+        shell: bash
+        run: cargo build --locked --release --target "${{ matrix.platform.target }}" --manifest-path "source/apps/${{ matrix.tool.id }}/Cargo.toml"
+      - id: windows-signing
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
+        uses: ./automation/.github/actions/import-windows-certificate
+        with:
+          certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - name: Sign Windows binary
+        if: runner.os == 'Windows' && steps.windows-signing.outputs.thumbprint != ''
+        shell: pwsh
+        env:
+          SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
+          THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
+          BINARY: source/apps/${{ matrix.tool.id }}/target/${{ matrix.platform.target }}/release/${{ matrix.tool.binary }}${{ matrix.platform.extension }}
+        run: "& $env:SIGNTOOL sign /sha1 $env:THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $env:BINARY"
+      - if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
+        uses: ./automation/.github/actions/import-apple-certificate
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Sign macOS binary
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "source/apps/${{ matrix.tool.id }}/target/${{ matrix.platform.target }}/release/${{ matrix.tool.binary }}"
+      - name: Stage binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir tool-stage
+          source="source/apps/${{ matrix.tool.id }}/target/${{ matrix.platform.target }}/release/${{ matrix.tool.binary }}${{ matrix.platform.extension }}"
+          target="tool-stage/ISpooferMotion-${{ matrix.tool.display }}-${{ inputs.version }}-${{ matrix.platform.label }}${{ matrix.platform.extension }}"
+          test -s "$source"
+          cp "$source" "$target"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tool-${{ matrix.tool.id }}-${{ matrix.platform.label }}
+          path: tool-stage/*
+          if-no-files-found: error
+          retention-days: 7
+    env:
+      WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}

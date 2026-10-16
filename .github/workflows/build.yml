@@ -58,7 +58,9 @@ jobs:
         with:
           bun: "true"
           cache-key: desktop-release-${{ matrix.label }}
-          workspaces: source/src-tauri
+          workspaces: |
+            source/src-tauri
+            source/apps/mcp-server
       - name: Validate desktop source
         shell: bash
         run: node automation/scripts/verify-desktop-source.mjs source "v${{ inputs.version }}"

@@ -118,11 +118,25 @@ export async function verifyDesktopSource(path, expectedTag) {
   );
   const cargo = await readFile(join(path, "src-tauri/Cargo.toml"), "utf8");
   const match = /^version\s*=\s*"([^"]+)"/m.exec(cargo);
+  const mcpCargo = await readFile(
+    join(path, "apps/mcp-server/Cargo.toml"),
+    "utf8",
+  );
+  const obfuscatorCargo = await readFile(
+    join(path, "apps/obfuscator/Cargo.toml"),
+    "utf8",
+  );
+  const mcpVersion = /^version\s*=\s*"([^"]+)"/m.exec(mcpCargo)?.[1];
+  const obfuscatorVersion = /^version\s*=\s*"([^"]+)"/m.exec(
+    obfuscatorCargo,
+  )?.[1];
   if (
     manifest.name !== "ispoofermotion" ||
     tauri.identifier !== "com.ispoofermotion.desktop" ||
     tauri.version !== "../package.json" ||
     match?.[1] !== manifest.version ||
+    mcpVersion !== manifest.version ||
+    obfuscatorVersion !== manifest.version ||
     JSON.stringify(windows.bundle.targets) !== JSON.stringify(["nsis"]) ||
     JSON.stringify(macos.bundle.targets) !== JSON.stringify(["app", "dmg"])
   ) {
