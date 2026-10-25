@@ -68,6 +68,19 @@ jobs:
       - name: Build release binary
         shell: bash
         run: cargo build --locked --release --target "${{ matrix.platform.target }}" --manifest-path "source/apps/${{ matrix.tool.id }}/Cargo.toml"
+      - name: Verify Luau obfuscation
+        if: matrix.tool.id == 'obfuscator'
+        shell: bash
+        env:
+          OBFUSCATOR: source/apps/obfuscator/target/${{ matrix.platform.target }}/release/${{ matrix.tool.binary }}${{ matrix.platform.extension }}
+        run: |
+          set -euo pipefail
+          output="${RUNNER_TEMP}/Bridge.obfuscated.luau"
+          "$OBFUSCATOR" \
+            --source source/apps/desktop/studio-plugin/src/Bridge.luau \
+            --target "$output" \
+            --seed 1
+          test -s "$output"
       - id: windows-signing
         if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
         uses: ./automation/.github/actions/import-windows-certificate

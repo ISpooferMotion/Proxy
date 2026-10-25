@@ -59,7 +59,7 @@ jobs:
           bun: "true"
           cache-key: desktop-release-${{ matrix.label }}
           workspaces: |
-            source/src-tauri
+            source/apps/desktop/src-tauri
             source/apps/mcp-server
       - name: Validate desktop source
         shell: bash
@@ -85,9 +85,9 @@ jobs:
         env:
           SIGNING_THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
         run: |
-          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync("source/src-tauri/tauri.signing.conf.json", JSON.stringify({bundle:{windows:{certificateThumbprint:process.env.SIGNING_THUMBPRINT,digestAlgorithm:"sha256",timestampUrl:"http://timestamp.digicert.com"}}}))'
+          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync("source/apps/desktop/src-tauri/tauri.signing.conf.json", JSON.stringify({bundle:{windows:{certificateThumbprint:process.env.SIGNING_THUMBPRINT,digestAlgorithm:"sha256",timestampUrl:"http://timestamp.digicert.com"}}}))'
       - name: Build the unmodified desktop app
-        working-directory: source
+        working-directory: source/apps/desktop
         shell: bash
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -107,7 +107,7 @@ jobs:
           fi
       - name: Stage desktop installer
         shell: bash
-        run: node automation/scripts/stage-desktop-installer.mjs "source/src-tauri/target/release/bundle/${{ matrix.bundle_directory }}" installer-stage "${{ inputs.version }}" "${{ matrix.label }}"
+        run: node automation/scripts/stage-desktop-installer.mjs "source/apps/desktop/src-tauri/target/release/bundle/${{ matrix.bundle_directory }}" installer-stage "${{ inputs.version }}" "${{ matrix.label }}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: desktop-${{ matrix.label }}

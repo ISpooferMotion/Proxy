@@ -104,19 +104,29 @@ export async function sha256File(path) {
 }
 
 export async function verifyDesktopSource(path, expectedTag) {
+  const desktopPath = join(path, "apps", "desktop");
   const manifest = JSON.parse(
-    await readFile(join(path, "package.json"), "utf8"),
+    await readFile(join(desktopPath, "package.json"), "utf8"),
   );
   const tauri = JSON.parse(
-    await readFile(join(path, "src-tauri/tauri.conf.json"), "utf8"),
+    await readFile(join(desktopPath, "src-tauri/tauri.conf.json"), "utf8"),
   );
   const windows = JSON.parse(
-    await readFile(join(path, "src-tauri/tauri.windows.conf.json"), "utf8"),
+    await readFile(
+      join(desktopPath, "src-tauri/tauri.windows.conf.json"),
+      "utf8",
+    ),
   );
   const macos = JSON.parse(
-    await readFile(join(path, "src-tauri/tauri.macos.conf.json"), "utf8"),
+    await readFile(
+      join(desktopPath, "src-tauri/tauri.macos.conf.json"),
+      "utf8",
+    ),
   );
-  const cargo = await readFile(join(path, "src-tauri/Cargo.toml"), "utf8");
+  const cargo = await readFile(
+    join(desktopPath, "src-tauri/Cargo.toml"),
+    "utf8",
+  );
   const match = /^version\s*=\s*"([^"]+)"/m.exec(cargo);
   const mcpCargo = await readFile(
     join(path, "apps/mcp-server/Cargo.toml"),
