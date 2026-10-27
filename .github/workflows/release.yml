@@ -41,6 +41,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
+          ref: ${{ job.workflow_sha }}
           path: automation
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -61,27 +62,322 @@ jobs:
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           version="$(node automation/scripts/verify-desktop-source.mjs source "$RELEASE_TAG" | sed -n 's/.*validated: //p')"
           test -n "$version"
-          git -C source fetch --tags --force
-          if git -C source rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}" >/dev/null 2>&1; then
-            test "$(git -C source rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$SOURCE_SHA"
-          fi
+          tag_commit="$(git -C source rev-parse --verify "refs/tags/$RELEASE_TAG^{commit}")" || {
+            echo "::error::The release tag must already exist in the source repository."
+            exit 1
+          }
+          test "$tag_commit" = "$SOURCE_SHA" || {
+            echo "::error::The release tag must point to the selected source commit."
+            exit 1
+          }
           echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Require signed desktop release configuration
+        shell: bash
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$WINDOWS_CERTIFICATE" && -n "$WINDOWS_CERTIFICATE_PASSWORD" ]] || {
+            echo "::error::A Windows signing certificate is required for releases."
+            exit 1
+          }
+          [[ -n "$APPLE_CERTIFICATE" && -n "$APPLE_CERTIFICATE_PASSWORD" && -n "$APPLE_SIGNING_IDENTITY" ]] || {
+            echo "::error::An Apple Developer signing identity is required for releases."
+            exit 1
+          }
+          [[ -n "$APPLE_ID" && -n "$APPLE_PASSWORD" && "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || {
+            echo "::error::Apple notarization credentials and a valid Team ID are required for releases."
+            exit 1
+          }
   build:
     needs: validate
-    uses: ISpooferMotion/Proxy/.github/workflows/build.yml@main
+    uses: ./.github/workflows/build.yml
     with:
       source_sha: ${{ inputs.source_sha }}
       version: ${{ needs.validate.outputs.version }}
-    secrets: inherit
+    secrets:
+      PAT: ${{ secrets.PAT }}
   tools:
     needs: validate
-    uses: ISpooferMotion/Proxy/.github/workflows/build-tools.yml@main
+    uses: ./.github/workflows/build-tools.yml
     with:
       source_sha: ${{ inputs.source_sha }}
       version: ${{ needs.validate.outputs.version }}
-    secrets: inherit
+    secrets:
+      PAT: ${{ secrets.PAT }}
+  approve-source:
+    needs: validate
+    runs-on: windows-latest
+    environment: release
+    steps:
+      - name: Approve the validated release source before signing
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          echo "Approved source ${SOURCE_SHA} for ${RELEASE_TAG}."
+  sign:
+    needs: [validate, build, tools, approve-source]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: windows-latest
+            platform: windows
+          - runner: macos-15
+            platform: macos
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'windows'
+        with:
+          name: unsigned-desktop-windows-x86_64
+          path: downloads/desktop-windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'windows'
+        with:
+          name: unsigned-tool-mcp-server-windows-x86_64
+          path: downloads/mcp-windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'windows'
+        with:
+          name: unsigned-tool-obfuscator-windows-x86_64
+          path: downloads/obfuscator-windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-desktop-macos-x86_64
+          path: downloads/desktop-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-app-macos-x86_64
+          path: downloads/app-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-tool-mcp-server-macos-x86_64
+          path: downloads/mcp-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-tool-obfuscator-macos-x86_64
+          path: downloads/obfuscator-x86_64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-desktop-macos-aarch64
+          path: downloads/desktop-aarch64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-app-macos-aarch64
+          path: downloads/app-aarch64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-tool-mcp-server-macos-aarch64
+          path: downloads/mcp-aarch64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        if: matrix.platform == 'macos'
+        with:
+          name: unsigned-tool-obfuscator-macos-aarch64
+          path: downloads/obfuscator-aarch64
+      - id: windows-signing
+        if: matrix.platform == 'windows'
+        uses: ./automation/.github/actions/import-windows-certificate
+        with:
+          certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - id: apple-signing
+        if: matrix.platform == 'macos'
+        uses: ./automation/.github/actions/import-apple-certificate
+        with:
+          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      - name: Sign and verify Windows release artifacts
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
+          THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
+        run: |
+          $targets = @(
+            @{ Source = "downloads/desktop-windows"; Destination = "signed-desktop" },
+            @{ Source = "downloads/mcp-windows"; Destination = "signed-mcp" },
+            @{ Source = "downloads/obfuscator-windows"; Destination = "signed-obfuscator" }
+          )
+          foreach ($target in $targets) {
+            $files = @(Get-ChildItem -LiteralPath $target.Source -File)
+            if ($files.Count -ne 1) { throw "Expected one artifact in $($target.Source)" }
+            & $env:SIGNTOOL sign /sha1 $env:THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $files[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw "Windows signing failed" }
+            & $env:SIGNTOOL verify /pa /all $files[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw "Windows signature verification failed" }
+            New-Item -ItemType Directory -Force $target.Destination | Out-Null
+            Copy-Item -LiteralPath $files[0].FullName -Destination $target.Destination
+          }
+      - name: Sign, notarize, and verify macOS release artifacts
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          verify_team() {
+            local path="$1"
+            /usr/bin/codesign --verify --deep --strict "$path"
+            local actual_team
+            actual_team="$(/usr/bin/codesign -dv --verbose=4 "$path" 2>&1 | sed -n 's/^TeamIdentifier=//p' | head -n 1)"
+            [[ "$actual_team" == "$APPLE_TEAM_ID" ]]
+          }
+          mkdir -p signed-desktop signed-mcp-x86_64 signed-obfuscator-x86_64 signed-mcp-aarch64 signed-obfuscator-aarch64
+          for arch in x86_64 aarch64; do
+            installer="$(find "downloads/desktop-$arch" -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+            app_archive="downloads/app-$arch/ISpooferMotion.app.zip"
+            test -n "$installer" && test -f "$app_archive"
+            ditto -x -k "$app_archive" "downloads/app-$arch"
+            app="downloads/app-$arch/ISpooferMotion.app"
+            test -d "$app"
+            /usr/bin/codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$app"
+            verify_team "$app"
+            ditto -c -k --sequesterRsrc --keepParent "$app" "$RUNNER_TEMP/ISpooferMotion-$arch.app.zip"
+            xcrun notarytool submit "$RUNNER_TEMP/ISpooferMotion-$arch.app.zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$app"
+            installer_name="$(basename "$installer")"
+            writable_dmg="$RUNNER_TEMP/ISpooferMotion-writable.dmg"
+            mount_point="$RUNNER_TEMP/ISpooferMotion-dmg-$arch"
+            hdiutil convert "$installer" -format UDRW -ov -o "$writable_dmg"
+            mkdir -p "$mount_point"
+            hdiutil attach -readwrite -nobrowse -mountpoint "$mount_point" "$writable_dmg"
+            mounted_app="$(find "$mount_point" -maxdepth 1 -type d -name '*.app' -print -quit)"
+            test -n "$mounted_app"
+            rm -rf "$mounted_app"
+            ditto "$app" "$mounted_app"
+            hdiutil detach "$mount_point"
+            signed_dmg="signed-desktop/$installer_name"
+            hdiutil convert "$writable_dmg" -format UDZO -ov -o "$signed_dmg"
+            xcrun notarytool submit "$signed_dmg" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$signed_dmg"
+            xcrun stapler validate "$signed_dmg"
+          done
+          for arch in x86_64 aarch64; do
+            for tool in mcp obfuscator; do
+              source="downloads/$tool-$arch"
+              files=("$source"/*)
+              [[ ${#files[@]} -eq 1 && -f "${files[0]}" ]]
+              /usr/bin/codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "${files[0]}"
+              verify_team "${files[0]}"
+              package_dir="$RUNNER_TEMP/ISpooferMotion-$tool-$arch"
+              package_zip="$RUNNER_TEMP/ISpooferMotion-$tool-$arch.zip"
+              mkdir -p "$package_dir"
+              cp "${files[0]}" "$package_dir/"
+              ditto -c -k --sequesterRsrc --keepParent "$package_dir" "$package_zip"
+              xcrun notarytool submit "$package_zip" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+              rm -rf "$package_dir" "$package_zip"
+              cp "${files[0]}" "signed-$tool-$arch/"
+            done
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'windows'
+        with:
+          name: desktop-windows-x86_64
+          path: signed-desktop/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'windows'
+        with:
+          name: tool-mcp-server-windows-x86_64
+          path: signed-mcp/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'windows'
+        with:
+          name: tool-obfuscator-windows-x86_64
+          path: signed-obfuscator/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'macos'
+        with:
+          name: desktop-macos-x86_64
+          path: signed-desktop/*-macos-x86_64.dmg
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'macos'
+        with:
+          name: desktop-macos-aarch64
+          path: signed-desktop/*-macos-aarch64.dmg
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'macos'
+        with:
+          name: tool-mcp-server-macos-x86_64
+          path: signed-mcp-x86_64/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'macos'
+        with:
+          name: tool-obfuscator-macos-x86_64
+          path: signed-obfuscator-x86_64/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'macos'
+        with:
+          name: tool-mcp-server-macos-aarch64
+          path: signed-mcp-aarch64/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: matrix.platform == 'macos'
+        with:
+          name: tool-obfuscator-macos-aarch64
+          path: signed-obfuscator-aarch64/*
+          if-no-files-found: error
+          retention-days: 7
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        env:
+          WINDOWS_THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
+          APPLE_KEYCHAIN: ${{ steps.apple-signing.outputs.keychain }}
+        run: |
+          set +e
+          if [[ -n "$WINDOWS_THUMBPRINT" ]]; then
+            powershell.exe -NoProfile -NonInteractive -Command '$thumbprint = $env:WINDOWS_THUMBPRINT; Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue'
+          fi
+          if [[ -n "$APPLE_KEYCHAIN" ]]; then
+            security delete-keychain "$APPLE_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/ispoofermotion-release.p12" "$RUNNER_TEMP"/ISpooferMotion-*.app.zip "$RUNNER_TEMP"/ISpooferMotion-*.zip "$RUNNER_TEMP/ISpooferMotion-writable.dmg"
+          rm -rf "$RUNNER_TEMP"/ISpooferMotion-mcp-* "$RUNNER_TEMP"/ISpooferMotion-obfuscator-*
   publish:
-    needs: [validate, build, tools]
+    needs: [validate, sign, build, tools]
     runs-on: windows-latest
     environment: release
     timeout-minutes: 30
@@ -89,6 +385,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
+          ref: ${{ job.workflow_sha }}
           path: automation
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

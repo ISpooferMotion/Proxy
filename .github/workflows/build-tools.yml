@@ -10,11 +10,6 @@ on:
         required: true
     secrets:
       PAT: { required: true }
-      WINDOWS_CERTIFICATE_BASE64: { required: false }
-      WINDOWS_CERTIFICATE_PASSWORD: { required: false }
-      APPLE_CERTIFICATE: { required: false }
-      APPLE_CERTIFICATE_PASSWORD: { required: false }
-      APPLE_SIGNING_IDENTITY: { required: false }
 permissions:
   contents: read
 jobs:
@@ -49,6 +44,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
+          ref: ${{ job.workflow_sha }}
           path: automation
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -81,31 +77,6 @@ jobs:
             --target "$output" \
             --seed 1
           test -s "$output"
-      - id: windows-signing
-        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
-        uses: ./automation/.github/actions/import-windows-certificate
-        with:
-          certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      - name: Sign Windows binary
-        if: runner.os == 'Windows' && steps.windows-signing.outputs.thumbprint != ''
-        shell: pwsh
-        env:
-          SIGNTOOL: ${{ steps.windows-signing.outputs.signtool }}
-          THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
-          BINARY: source/apps/${{ matrix.tool.id }}/target/${{ matrix.platform.target }}/release/${{ matrix.tool.binary }}${{ matrix.platform.extension }}
-        run: "& $env:SIGNTOOL sign /sha1 $env:THUMBPRINT /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $env:BINARY"
-      - if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
-        uses: ./automation/.github/actions/import-apple-certificate
-        with:
-          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
-          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      - name: Sign macOS binary
-        if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
-        shell: bash
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "source/apps/${{ matrix.tool.id }}/target/${{ matrix.platform.target }}/release/${{ matrix.tool.binary }}"
       - name: Stage binary
         shell: bash
         run: |
@@ -117,10 +88,7 @@ jobs:
           cp "$source" "$target"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: tool-${{ matrix.tool.id }}-${{ matrix.platform.label }}
+          name: unsigned-tool-${{ matrix.tool.id }}-${{ matrix.platform.label }}
           path: tool-stage/*
           if-no-files-found: error
           retention-days: 7
-    env:
-      WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
-      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}

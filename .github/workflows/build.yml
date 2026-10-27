@@ -10,14 +10,6 @@ on:
         required: true
     secrets:
       PAT: { required: true }
-      WINDOWS_CERTIFICATE_BASE64: { required: false }
-      WINDOWS_CERTIFICATE_PASSWORD: { required: false }
-      APPLE_CERTIFICATE: { required: false }
-      APPLE_CERTIFICATE_PASSWORD: { required: false }
-      APPLE_SIGNING_IDENTITY: { required: false }
-      APPLE_ID: { required: false }
-      APPLE_PASSWORD: { required: false }
-      APPLE_TEAM_ID: { required: false }
 permissions:
   contents: read
 jobs:
@@ -45,6 +37,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ISpooferMotion/Proxy
+          ref: ${{ job.workflow_sha }}
           path: automation
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -68,52 +61,34 @@ jobs:
         working-directory: source
         shell: bash
         run: bun install --frozen-lockfile --ignore-scripts
-      - id: windows-signing
-        if: runner.os == 'Windows' && env.WINDOWS_SIGNING_ENABLED == 'true'
-        uses: ./automation/.github/actions/import-windows-certificate
-        with:
-          certificate-base64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
-          certificate-password: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-      - if: runner.os == 'macOS' && env.APPLE_SIGNING_ENABLED == 'true'
-        uses: ./automation/.github/actions/import-apple-certificate
-        with:
-          certificate-base64: ${{ secrets.APPLE_CERTIFICATE }}
-          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-      - name: Configure Windows code-signing if available
-        if: runner.os == 'Windows' && steps.windows-signing.outputs.thumbprint != ''
-        shell: bash
-        env:
-          SIGNING_THUMBPRINT: ${{ steps.windows-signing.outputs.thumbprint }}
-        run: |
-          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync("source/apps/desktop/src-tauri/tauri.signing.conf.json", JSON.stringify({bundle:{windows:{certificateThumbprint:process.env.SIGNING_THUMBPRINT,digestAlgorithm:"sha256",timestampUrl:"http://timestamp.digicert.com"}}}))'
       - name: Build the unmodified desktop app
         working-directory: source/apps/desktop
         shell: bash
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then unset APPLE_SIGNING_IDENTITY; fi
-          if [[ -z "${APPLE_ID:-}" || -z "${APPLE_PASSWORD:-}" || -z "${APPLE_TEAM_ID:-}" ]]; then
-            unset APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID
-          fi
-          if [[ -f src-tauri/tauri.signing.conf.json ]]; then
-            bun x tauri build --ci --config src-tauri/tauri.signing.conf.json --bundles "${{ matrix.bundles }}"
-          else
-            bun x tauri build --ci --bundles "${{ matrix.bundles }}"
-          fi
+          bun x tauri build --ci --bundles "${{ matrix.bundles }}"
       - name: Stage desktop installer
         shell: bash
         run: node automation/scripts/stage-desktop-installer.mjs "source/apps/desktop/src-tauri/target/release/bundle/${{ matrix.bundle_directory }}" installer-stage "${{ inputs.version }}" "${{ matrix.label }}"
+      - name: Stage macOS app bundle for isolated signing
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app="source/apps/desktop/src-tauri/target/release/bundle/macos/ISpooferMotion.app"
+          test -d "$app"
+          mkdir -p app-stage
+          ditto -c -k --sequesterRsrc --keepParent "$app" app-stage/ISpooferMotion.app.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: desktop-${{ matrix.label }}
+          name: unsigned-desktop-${{ matrix.label }}
           path: installer-stage/*
           if-no-files-found: error
           retention-days: 7
-    env:
-      WINDOWS_SIGNING_ENABLED: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
-      APPLE_SIGNING_ENABLED: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: runner.os == 'macOS'
+        with:
+          name: unsigned-app-${{ matrix.label }}
+          path: app-stage/ISpooferMotion.app.zip
+          if-no-files-found: error
+          retention-days: 7
