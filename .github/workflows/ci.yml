@@ -15,8 +15,50 @@ on:
 permissions:
   contents: read
 jobs:
+  audit:
+    name: Audit desktop dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ISpooferMotion/Proxy
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ISpooferMotion/ISpooferMotion-VeeThree
+          ref: ${{ inputs.source_sha }}
+          path: source
+          token: ${{ secrets.PAT }}
+          persist-credentials: false
+      - uses: ./automation/.github/actions/setup-build
+        with:
+          bun: "true"
+          cache-key: desktop-dependency-audit
+          workspaces: |
+            source/apps/desktop/src-tauri
+            source/apps/mcp-server
+            source/apps/obfuscator
+      - name: Install frontend dependencies without lifecycle scripts
+        working-directory: source
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Audit frontend dependency graph
+        working-directory: source
+        run: bun audit
+      - name: Install pinned Rust audit tool
+        run: cargo install cargo-audit --locked --version 0.22.2
+      - name: Audit Rust dependency graphs
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo audit --file apps/desktop/src-tauri/Cargo.lock
+          cargo audit --file apps/mcp-server/Cargo.lock
+          cargo audit --file apps/obfuscator/Cargo.lock
   desktop:
     name: Validate desktop (${{ matrix.runner }})
+    needs: audit
     strategy:
       fail-fast: false
       matrix:
